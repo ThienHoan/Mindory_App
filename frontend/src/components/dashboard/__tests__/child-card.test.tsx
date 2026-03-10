@@ -4,17 +4,13 @@ import { ChildCard } from '@/components/dashboard/child-card'
 
 describe('ChildCard', () => {
   it('renders child name correctly', () => {
-    render(<ChildCard name="Test Child" />)
+    render(<ChildCard id="1" name="Test Child" />)
     expect(screen.getByText('Test Child')).toBeInTheDocument()
   })
 
-  it('displays child email when provided', () => {
-    render(<ChildCard name="Test Child" email="test@example.com" />)
-    expect(screen.getByText('test@example.com')).toBeInTheDocument()
-  })
-
-  it('renders without email', () => {
-    render(<ChildCard name="Test Child" />)
-    expect(screen.queryByText('@')).not.toBeInTheDocument()
+  it('renders correctly with default props', () => {
+    render(<ChildCard id="1" name="Test Child" />)
+    expect(screen.getByText(/Lớp 4/i)).toBeInTheDocument()
+    expect(screen.getByText('Chưa học hôm nay')).toBeInTheDocument()
   })
 })

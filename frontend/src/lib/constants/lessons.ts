@@ -1,29 +1,20 @@
 export const MOCK_LESSONS = [
     {
-        id: '1',
-        subjectId: 'math',
+        id: 'd0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14',
+        subjectId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
         grade: 4,
         title: 'Phép cộng có nhớ',
-        description: 'Học cách thực hiện phép cộng các số lớn có nhớ.',
-        pdfUrl: '/lessons/math-4-add.pdf',
-        totalPages: 5
+        description: 'Bài học về phép cộng các số tự nhiên có nhớ',
+        pdfUrl: 'https://example.com/math_lesson_1.pdf',
+        totalPages: 3
     },
     {
-        id: '2',
-        subjectId: 'math',
+        id: 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15',
+        subjectId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
         grade: 4,
         title: 'Phép trừ có nhớ',
-        description: 'Học cách thực hiện phép trừ các số lớn có nhớ.',
-        pdfUrl: '/lessons/math-4-sub.pdf',
-        totalPages: 4
-    },
-    {
-        id: '3',
-        subjectId: 'vietnamese',
-        grade: 4,
-        title: 'Dế mèn phiêu lưu ký',
-        description: 'Đọc đoạn trích Dế mèn bênh vực kẻ yếu.',
-        pdfUrl: '/lessons/viet-4-demen.pdf',
+        description: 'Bài học về phép trừ các số tự nhiên có nhớ',
+        pdfUrl: 'https://example.com/math_lesson_2.pdf',
         totalPages: 3
     }
 ]

@@ -54,22 +54,23 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Failed to create user object' }, { status: 500 })
     }
 
-    // 4. Update Profile with Parent ID (Triggers might handle role/metadata, but parent_id needs setting)
-    // Our trigger `handle_new_user` sets role based on metadata.
-    // We need to ensuring `parent_id` is set on the 'profiles' table.
-
-    // The trigger handles the INSERT into profiles. 
-    // We need to UPDATE that profile to set parent_id.
-
-    const { error: updateError } = await supabaseAdmin
+    // 4. Persist profile explicitly to avoid role defaulting to parent in DB
+    const { error: profileError } = await supabaseAdmin
         .from('profiles')
-        .update({ parent_id: parentId })
-        .eq('id', newUser.user.id)
+        .upsert(
+            {
+                id: newUser.user.id,
+                email,
+                full_name: fullName,
+                role: 'child',
+                parent_id: parentId,
+            },
+            { onConflict: 'id' }
+        )
 
-    if (updateError) {
-        // Log error but user is created.
-        console.error('Failed to link parent:', updateError)
-        return NextResponse.json({ error: 'User created but failed to link parent' }, { status: 500 })
+    if (profileError) {
+        console.error('Failed to persist child profile:', profileError)
+        return NextResponse.json({ error: 'User created but failed to persist child profile' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true, user: newUser.user })
