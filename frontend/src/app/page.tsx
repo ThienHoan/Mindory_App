@@ -6,9 +6,20 @@ export default async function Home() {
   
   const { data: { user } } = await supabase.auth.getUser()
   
-  if (user) {
-    redirect('/parent')
-  } else {
+  if (!user) {
     redirect('/login')
+  }
+
+  // Check role from profiles table
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (profile?.role === 'child') {
+    redirect('/child')
+  } else {
+    redirect('/parent')
   }
 }
