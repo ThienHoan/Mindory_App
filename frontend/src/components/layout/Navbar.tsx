@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 
@@ -35,9 +36,13 @@ export default function Navbar() {
                                 Xin chào, {user.user_metadata.full_name}
                             </span>
                         )}
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-600">
+                        <Link
+                            href="/parent/profile"
+                            className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-600 transition hover:ring-2 hover:ring-blue-300"
+                            title="Hồ sơ cá nhân"
+                        >
                             {user?.user_metadata?.full_name?.charAt(0) || 'U'}
-                        </div>
+                        </Link>
                     </div>
                 </div>
             </div>
