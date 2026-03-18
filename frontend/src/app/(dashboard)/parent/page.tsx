@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
     AcademicCapIcon,
     CheckCircleIcon,
@@ -11,11 +11,19 @@ import {
     TrophyIcon,
 } from '@heroicons/react/24/outline'
 import { createClient } from '@/lib/supabase/client'
+import { api } from '@/lib/api-client'
 
 interface ChildProfile {
     id: string
     full_name: string | null
     email: string | null
+}
+
+interface ParentStats {
+    children: Array<{ id: string; full_name: string | null }>
+    totalSessions: number
+    avgFocusMinutes: number
+    avgQuizScore: number
 }
 
 const tasks = [
@@ -24,108 +32,148 @@ const tasks = [
     { id: '3', title: 'Dọn dẹp đồ chơi', detail: 'Dự kiến: 19:00', point: '+20đ', done: false },
 ]
 
-const statCards = [
-    { label: 'Điểm tích lũy', value: '1,250', icon: StarIcon, colorClass: 'border-emerald-200 bg-emerald-50/80 text-emerald-600' },
-    { label: 'Hạng tuần', value: '#5', icon: TrophyIcon, colorClass: 'border-amber-200 bg-amber-50/80 text-amber-600' },
-    { label: 'Nhiệm vụ xong', value: '8/10', icon: CheckCircleIcon, colorClass: 'border-purple-200 bg-purple-50/80 text-purple-600' },
-]
-
 export default function ParentDashboardPage() {
-    const [selectedChild, setSelectedChild] = useState('')
-    const [children, setChildren] = useState<ChildProfile[]>([])
-    const [loadingChildren, setLoadingChildren] = useState(true)
     const supabase = createClient()
 
+    const [selectedChild, setSelectedChild] = useState('')
+    const [children, setChildren] = useState<ChildProfile[]>([])
+    const [stats, setStats] = useState<ParentStats | null>(null)
+    const [loading, setLoading] = useState(true)
+
     useEffect(() => {
-        async function fetchChildren() {
-            const {
-                data: { user },
-            } = await supabase.auth.getUser()
+        let isMounted = true
 
-            if (!user) {
-                setLoadingChildren(false)
-                return
+        async function loadData() {
+            try {
+                const {
+                    data: { user },
+                } = await supabase.auth.getUser()
+
+                if (!user) {
+                    if (isMounted) setLoading(false)
+                    return
+                }
+
+                const [statsData, childrenResponse] = await Promise.all([
+                    api.sessions.stats(user.id),
+                    supabase
+                        .from('profiles')
+                        .select('id, full_name, email')
+                        .eq('parent_id', user.id)
+                        .eq('role', 'child'),
+                ])
+
+                if (!isMounted) return
+
+                setStats(statsData as ParentStats)
+
+                const fetchedChildren = (childrenResponse.data as ChildProfile[] | null) ?? []
+                setChildren(fetchedChildren)
+                if (fetchedChildren.length > 0) {
+                    setSelectedChild(fetchedChildren[0].id)
+                }
+            } catch (error) {
+                console.error('Error loading parent dashboard:', error)
+            } finally {
+                if (isMounted) setLoading(false)
             }
-
-            const { data } = await supabase
-                .from('profiles')
-                .select('id, full_name, email')
-                .eq('parent_id', user.id)
-                .eq('role', 'child')
-
-            const fetchedChildren = (data as ChildProfile[] | null) ?? []
-            setChildren(fetchedChildren)
-
-            if (fetchedChildren.length > 0) {
-                setSelectedChild((prev) => prev || fetchedChildren[0].id)
-            }
-
-            setLoadingChildren(false)
         }
 
-        fetchChildren()
+        loadData()
+
+        return () => {
+            isMounted = false
+        }
     }, [supabase])
 
-    const getInitials = (name: string | null) => {
-        if (!name) return 'BE'
-        const words = name
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean)
+    const selectedChildName = useMemo(() => {
+        return children.find((child) => child.id === selectedChild)?.full_name || 'Chưa chọn bé'
+    }, [children, selectedChild])
 
-        if (words.length === 0) return 'BE'
-        if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+    const statCards = [
+        {
+            label: 'Điểm tích lũy',
+            value: '1,250',
+            icon: StarIcon,
+            colorClass: 'border-emerald-200 bg-emerald-50/80 text-emerald-600',
+        },
+        {
+            label: 'Hạng tuần',
+            value: '#5',
+            icon: TrophyIcon,
+            colorClass: 'border-amber-200 bg-amber-50/80 text-amber-600',
+        },
+        {
+            label: 'Nhiệm vụ xong',
+            value: `${stats?.totalSessions ?? 0}`,
+            icon: CheckCircleIcon,
+            colorClass: 'border-sky-200 bg-sky-50/80 text-sky-600',
+        },
+    ]
 
-        return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase()
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center p-12">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
+                    <p className="text-sm font-bold text-gray-400">Đang tải số liệu...</p>
+                </div>
+            </div>
+        )
     }
 
     return (
-        <div className="space-y-6 rounded-3xl border border-blue-100 bg-gradient-to-b from-blue-50 to-indigo-50 p-4 sm:p-6 lg:p-8">
-            <section className="rounded-3xl bg-white/90 p-3 shadow-sm ring-1 ring-black/5">
-                <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-blue-500">Đang xem cho:</span>
+        <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 className="text-3xl font-black tracking-tight text-gray-900">Parent Dashboard</h2>
+                    <p className="mt-1 text-sm text-slate-500">Đang xem dữ liệu của: {selectedChildName}</p>
+                </div>
+                <Link
+                    href="/parent/assign"
+                    className="rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-xl shadow-indigo-100 transition-all active:scale-95 hover:bg-indigo-700"
+                >
+                    Giao Bài Mới +
+                </Link>
+            </div>
 
-                    {loadingChildren ? (
-                        <span className="text-sm font-medium text-slate-500">Đang tải danh sách bé...</span>
-                    ) : children.length === 0 ? (
+            <section className="rounded-3xl border border-blue-100 bg-gradient-to-b from-blue-50 to-indigo-50 p-4 sm:p-6">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-blue-500">Đang xem cho:</span>
+                    {children.length === 0 ? (
                         <span className="text-sm font-medium text-slate-500">Chưa có hồ sơ bé nào.</span>
-                    ) : children.map((child) => {
-                        const isActive = selectedChild === child.id
-                        return (
-                            <button
-                                key={child.id}
-                                type="button"
-                                onClick={() => setSelectedChild(child.id)}
-                                className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition ${
-                                    isActive
-                                        ? 'border-blue-500 bg-blue-500 text-white shadow'
-                                        : 'border-slate-200 bg-slate-100 text-slate-700 hover:border-blue-200 hover:bg-blue-50'
-                                }`}
-                            >
-                                <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-xs font-bold text-blue-600">
-                                    {getInitials(child.full_name)}
-                                </span>
-                                {child.full_name || 'Chưa đặt tên'}
-                            </button>
-                        )
-                    })}
+                    ) : (
+                        children.map((child) => {
+                            const isActive = selectedChild === child.id
+                            return (
+                                <button
+                                    key={child.id}
+                                    type="button"
+                                    onClick={() => setSelectedChild(child.id)}
+                                    className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${
+                                        isActive
+                                            ? 'border-blue-500 bg-blue-500 text-white shadow'
+                                            : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50'
+                                    }`}
+                                >
+                                    {child.full_name || 'Chưa đặt tên'}
+                                </button>
+                            )
+                        })
+                    )}
 
                     <Link
                         href="/parent/children/create"
-                        className="inline-flex items-center gap-2 rounded-full border border-dashed border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-100"
+                        className="rounded-full border border-dashed border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-100"
                     >
-                        <span className="text-base leading-none">+</span>
-                        Thêm bé mới
+                        + Thêm bé mới
                     </Link>
                 </div>
             </section>
 
             <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 {statCards.map((card) => (
-                    <article
-                        key={card.label}
-                        className={`rounded-3xl border px-5 py-4 shadow-sm ${card.colorClass}`}
-                    >
+                    <article key={card.label} className={`rounded-3xl border px-5 py-4 shadow-sm ${card.colorClass}`}>
                         <p className="text-sm font-semibold">{card.label}</p>
                         <div className="mt-2 flex items-center gap-2">
                             <card.icon className="h-5 w-5" />
@@ -156,11 +204,7 @@ export default function ParentDashboardPage() {
                                             task.done ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
                                         }`}
                                     >
-                                        {task.done ? (
-                                            <CheckCircleIcon className="h-5 w-5" />
-                                        ) : (
-                                            <AcademicCapIcon className="h-5 w-5" />
-                                        )}
+                                        {task.done ? <CheckCircleIcon className="h-5 w-5" /> : <AcademicCapIcon className="h-5 w-5" />}
                                     </span>
                                     <div>
                                         <p className="font-semibold text-slate-800">{task.title}</p>
@@ -174,7 +218,7 @@ export default function ParentDashboardPage() {
                 </article>
 
                 <article className="xl:col-span-2 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-black/5">
-                    <h3 className="mb-5 text-2xl font-extrabold text-slate-900">Thành tích & Quà</h3>
+                    <h3 className="mb-5 text-2xl font-extrabold text-slate-900">Thành tích và Quà</h3>
 
                     <div className="space-y-4">
                         <div className="rounded-3xl bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-500 p-5 text-white">
@@ -204,11 +248,33 @@ export default function ParentDashboardPage() {
                         </div>
 
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                            <p className="text-sm font-semibold text-slate-700">Tiến độ tuần này</p>
-                            <p className="mt-1 text-sm text-slate-500">Minh Quang đang làm tốt hơn 15% so với tuần trước.</p>
+                            <p className="text-sm font-semibold text-slate-700">Tiến độ học tập</p>
+                            <p className="mt-1 text-sm text-slate-500">
+                                Tập trung trung bình: {stats?.avgFocusMinutes ?? 0} phút, điểm quiz: {stats?.avgQuizScore ?? 0}%.
+                            </p>
                         </div>
                     </div>
                 </article>
+            </section>
+
+            <section className="space-y-4">
+                <h3 className="text-xl font-black text-gray-800">Danh sách các con</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {(stats?.children ?? []).map((child) => (
+                        <div
+                            key={child.id}
+                            className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:shadow-lg"
+                        >
+                            <div>
+                                <p className="font-black text-gray-800">{child.full_name || 'Chưa đặt tên'}</p>
+                                <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Learner</p>
+                            </div>
+                            <Link href={`/parent/assign?childId=${child.id}`} className="rounded-xl bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-600">
+                                GIAO BÀI
+                            </Link>
+                        </div>
+                    ))}
+                </div>
             </section>
         </div>
     )

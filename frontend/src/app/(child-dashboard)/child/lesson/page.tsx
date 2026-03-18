@@ -1,169 +1,367 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { api, Lesson, Subject, Task } from '@/lib/api-client'
+import { cn } from '@/lib/utils'
 
-const shapes = [
-    { id: 1, type: 'circle', color: 'bg-blue-300', isStar: false },
-    { id: 2, type: 'square', color: 'bg-green-500', isStar: false },
-    { id: 3, type: 'star', color: 'bg-yellow-300', isStar: true },
-    { id: 4, type: 'diamond', color: 'bg-red-300', isStar: false },
-]
+type TaskItem = Task
 
-export default function ChildLessonPage() {
-    const [found, setFound] = useState(false)
-    const [showReward, setShowReward] = useState(false)
+function LessonContent() {
+    const searchParams = useSearchParams()
+    const supabase = useMemo(() => createClient(), [])
 
-    const handleShapeClick = (isStar: boolean) => {
-        if (isStar) {
-            setFound(true)
-            setShowReward(true)
-            setTimeout(() => setShowReward(false), 3000)
+    const taskId = searchParams.get('taskId')
+    const lessonId = searchParams.get('id')
+
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const [grade, setGrade] = useState<number>(4)
+    const [subjects, setSubjects] = useState<Subject[]>([])
+    const [lessonsBySubject, setLessonsBySubject] = useState<Record<string, Lesson[]>>({})
+    const [tasks, setTasks] = useState<TaskItem[]>([])
+
+    const [detailSource, setDetailSource] = useState<'task' | 'free' | null>(null)
+    const [detailTask, setDetailTask] = useState<TaskItem | null>(null)
+    const [detailLesson, setDetailLesson] = useState<Lesson | null>(null)
+    const [quizCount, setQuizCount] = useState(0)
+
+    useEffect(() => {
+        async function load() {
+            try {
+                const {
+                    data: { user },
+                } = await supabase.auth.getUser()
+                if (!user) {
+                    setError('Bạn chưa đăng nhập.')
+                    return
+                }
+
+                const [{ data: profile }, taskRes] = await Promise.all([
+                    supabase.from('profiles').select('*').eq('id', user.id).single(),
+                    api.tasks.listForChild(user.id),
+                ])
+
+                const nextGrade = profile?.grade || 4
+                setGrade(nextGrade)
+
+                const taskList = taskRes?.data ?? taskRes ?? []
+                setTasks(taskList)
+
+                if (taskId) {
+                    const task = await api.tasks.get(taskId)
+                    if (!task?.lesson_id) {
+                        setError('Nhiệm vụ không hợp lệ.')
+                        return
+                    }
+
+                    const lesson: Lesson = task.lessons
+                        ? {
+                            id: task.lessons.id ?? task.lesson_id,
+                            title: task.lessons.title,
+                            description: task.lessons.description,
+                            pdf_url: task.lessons.pdf_url,
+                            total_pages: task.lessons.total_pages,
+                            subject_id: '',
+                        }
+                        : await api.lessons.get(task.lesson_id)
+
+                    const quizzes = await api.quizzes.listByLesson(task.lesson_id)
+
+                    setDetailSource('task')
+                    setDetailTask(task)
+                    setDetailLesson(lesson)
+                    setQuizCount(Array.isArray(quizzes) ? quizzes.length : 0)
+                    return
+                }
+
+                if (lessonId) {
+                    const [lesson, quizzes] = await Promise.all([
+                        api.lessons.get(lessonId),
+                        api.quizzes.listByLesson(lessonId),
+                    ])
+                    setDetailSource('free')
+                    setDetailTask(null)
+                    setDetailLesson(lesson)
+                    setQuizCount(Array.isArray(quizzes) ? quizzes.length : 0)
+                    return
+                }
+
+                const subjectRes = await api.subjects.listByGrade(nextGrade)
+                const subjectList: Subject[] = subjectRes?.data ?? []
+                setSubjects(subjectList)
+
+                const lessonResults = await Promise.all(
+                    subjectList.map(async (subject) => {
+                        const lessonRes = await api.lessons.listBySubject(subject.id)
+                        return [subject.id, lessonRes?.data ?? []] as const
+                    })
+                )
+
+                const lessonMap: Record<string, Lesson[]> = {}
+                for (const [subjectId, list] of lessonResults) {
+                    lessonMap[subjectId] = list
+                }
+                setLessonsBySubject(lessonMap)
+            } catch (e) {
+                setError(e instanceof Error ? e.message : 'Không thể tải trang bài học.')
+            } finally {
+                setLoading(false)
+            }
         }
+
+        load()
+    }, [lessonId, supabase, taskId])
+
+    const activeTasks = useMemo(() => tasks.filter((task) => task.status !== 'completed'), [tasks])
+
+    if (loading) {
+        return (
+            <div className="min-h-full flex items-center justify-center">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Đang tải bài học...</p>
+                </div>
+            </div>
+        )
     }
 
-    return (
-        <div className="min-h-screen bg-gray-50 flex flex-col">
-            {/* Top bar */}
-            <header className="bg-white border-b border-gray-100 px-6 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 text-blue-500">
-                            <svg fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                            </svg>
-                        </div>
-                        <div>
-                            <p className="text-sm font-bold text-gray-800 leading-none">The Hidden Star Puzzle</p>
-                            <p className="text-xs text-blue-500 font-semibold">LEVEL 2: LOGIC & SHAPES</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Progress */}
-                <div className="flex items-center gap-3 flex-1 max-w-xs mx-8">
-                    <span className="text-xs text-gray-500 whitespace-nowrap">Page 4 of 6</span>
-                    <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 rounded-full" style={{ width: '65%' }} />
-                    </div>
-                    <span className="text-xs font-bold text-blue-500 whitespace-nowrap">65% Done!</span>
-                </div>
-
-                {/* Right controls */}
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 rounded-full">
-                        <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span className="text-sm font-bold text-blue-700">12:45</span>
-                    </div>
-                    <button className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-200">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                    </button>
-                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-500 font-bold text-sm">
-                        A
-                    </div>
-                </div>
-            </header>
-
-            {/* Main content */}
-            <main className="flex-1 flex flex-col items-center justify-center px-6 py-8">
-                <div className="bg-white rounded-3xl shadow-sm w-full max-w-2xl p-10">
-                    <h2 className="text-3xl font-extrabold text-gray-900 text-center mb-2">
-                        Can you find the hidden star?
-                    </h2>
-                    <p className="text-sm text-gray-400 text-center mb-8">
-                        Look closely at the patterns and click when you see it!
-                    </p>
-
-                    {/* Shapes area */}
-                    <div className="relative border-2 border-dashed border-blue-200 rounded-2xl bg-gray-50 p-10 flex items-center justify-center gap-10 mb-8">
-                        {/* Found counter */}
-                        <div className="absolute top-3 right-3 bg-blue-500 text-white text-xs font-bold px-3 py-1 rounded-full">
-                            Found: {found ? '1' : '0'}/1
-                        </div>
-
-                        {shapes.map((shape) => (
-                            <button
-                                key={shape.id}
-                                onClick={() => handleShapeClick(shape.isStar)}
-                                className="transition-transform hover:scale-110 active:scale-95"
-                            >
-                                {shape.type === 'circle' && (
-                                    <div className="w-16 h-16 rounded-full bg-blue-200 flex items-center justify-center" />
-                                )}
-                                {shape.type === 'square' && (
-                                    <div className="w-16 h-16 bg-green-500 rounded-lg flex items-center justify-center" />
-                                )}
-                                {shape.type === 'star' && (
-                                    <div className={`w-16 h-16 rounded-full ${found ? 'bg-yellow-300' : 'bg-yellow-200'} flex items-center justify-center text-3xl transition-colors`}>
-                                        ⭐
-                                    </div>
-                                )}
-                                {shape.type === 'diamond' && (
-                                    <div className="w-16 h-16 bg-red-300 rounded-sm flex items-center justify-center transform rotate-45" />
-                                )}
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Audio bar */}
-                    <div className="bg-gray-100 rounded-2xl px-5 py-3 flex items-center gap-3">
-                        <button className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center flex-shrink-0">
-                            <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                            </svg>
-                        </button>
-                        <div className="flex-1 h-1.5 bg-gray-300 rounded-full">
-                            <div className="h-full bg-gray-400 rounded-full" style={{ width: '40%' }} />
-                        </div>
-                        <span className="text-xs text-gray-400">Narrator Au...</span>
-                    </div>
-                </div>
-            </main>
-
-            {/* Bottom nav */}
-            <footer className="bg-white border-t border-gray-100 px-6 py-4 flex items-center justify-between max-w-2xl mx-auto w-full">
-                <Link
-                    href="/child"
-                    className="flex items-center gap-2 px-5 py-2 border border-gray-200 rounded-full text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
-                >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                    </svg>
-                    Back
+    if (error) {
+        return (
+            <div className="min-h-full flex flex-col items-center justify-center gap-4 p-8">
+                <span className="text-5xl">😕</span>
+                <p className="text-gray-500 font-bold text-center">{error}</p>
+                <Link href="/child" className="px-6 py-3 bg-purple-600 text-white rounded-2xl font-black text-sm">
+                    Về trang chủ
                 </Link>
-                <button className="flex items-center gap-2 px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full text-sm font-semibold transition-colors">
-                    Next Lesson
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                    </svg>
-                </button>
-                <button className="flex items-center gap-2 px-5 py-2 bg-yellow-400 hover:bg-yellow-500 text-white rounded-full text-sm font-semibold transition-colors">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                    </svg>
-                    Finish
-                </button>
-            </footer>
+            </div>
+        )
+    }
 
-            {/* Reward popup */}
-            {showReward && (
-                <div className="fixed bottom-24 right-8 bg-white rounded-2xl shadow-xl p-4 w-48 border border-gray-100 animate-bounce">
-                    <div className="flex items-center gap-2 mb-1">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                            🏆
+    if (!taskId && !lessonId) {
+        return (
+            <div className="max-w-6xl mx-auto p-8 space-y-7">
+                <div className="rounded-[2rem] bg-gradient-to-r from-purple-600 to-violet-500 p-7 text-white">
+                    <p className="text-xs font-black uppercase tracking-widest text-purple-200">Bài học</p>
+                    <h1 className="text-3xl font-black mt-2">Môn học lớp {grade}</h1>
+                    <p className="text-purple-100 mt-2 font-medium">Chọn môn và chương để học, sau đó làm kiểm tra ở trang Kiểm tra.</p>
+                </div>
+
+                {activeTasks.length > 0 && (
+                    <section className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-lg font-black text-gray-800">Nhiệm vụ được giao</h2>
+                            <span className="text-xs font-black text-purple-600 bg-purple-100 px-3 py-1 rounded-full">{activeTasks.length} nhiệm vụ</span>
                         </div>
-                        <div>
-                            <p className="text-xs text-gray-400">Earned Today</p>
-                            <p className="text-base font-extrabold text-gray-800">120 Stars</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            {activeTasks.map((task) => (
+                                <div key={task.id} className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm">
+                                    <p className="text-xs font-black text-purple-500 uppercase tracking-widest">Task</p>
+                                    <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{task.lessons?.title ?? 'Bài học'}</h3>
+                                    <p className="text-sm text-gray-500 mt-1 line-clamp-2">{task.lessons?.description ?? 'Bé mở bài học này để làm kiểm tra.'}</p>
+                                    <div className="mt-4 grid grid-cols-2 gap-2 text-center">
+                                        <div className="rounded-xl bg-gray-50 py-2">
+                                            <p className="text-[10px] font-black text-gray-400 uppercase">Trang</p>
+                                            <p className="text-sm font-black text-gray-800">{task.start_page}-{task.end_page}</p>
+                                        </div>
+                                        <div className="rounded-xl bg-gray-50 py-2">
+                                            <p className="text-[10px] font-black text-gray-400 uppercase">Pomodoro</p>
+                                            <p className="text-sm font-black text-gray-800">{task.session_duration_minutes}p</p>
+                                        </div>
+                                    </div>
+                                    <Link
+                                        href={`/child/lesson?taskId=${task.id}`}
+                                        className="mt-4 inline-flex w-full justify-center py-3 rounded-2xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-black"
+                                    >
+                                        Mở bài học
+                                    </Link>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                <section className="space-y-4">
+                    <h2 className="text-xl font-black text-gray-800">Danh sách môn và chương</h2>
+                    {subjects.length === 0 ? (
+                        <div className="bg-white rounded-3xl border border-dashed border-purple-200 p-8 text-center text-gray-500 font-bold">
+                            Chưa có môn học cho lớp {grade}.
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {subjects.map((subject) => {
+                                const lessons = lessonsBySubject[subject.id] ?? []
+                                return (
+                                    <div key={subject.id} className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <p className="text-lg font-black text-gray-800">{subject.name}</p>
+                                                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">{lessons.length} chương / bài</p>
+                                            </div>
+                                            <Link
+                                                href={`/child/quiz?subjectId=${subject.id}`}
+                                                className="px-4 py-2 rounded-xl bg-purple-50 text-purple-600 text-xs font-black hover:bg-purple-100"
+                                            >
+                                                Kiểm tra môn này
+                                            </Link>
+                                        </div>
+
+                                        {lessons.length === 0 ? (
+                                            <div className="mt-4 rounded-2xl border border-dashed border-gray-200 px-4 py-5 text-sm text-gray-400 font-semibold text-center">
+                                                Chưa có bài học cho môn này.
+                                            </div>
+                                        ) : (
+                                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {lessons.map((lesson, idx) => (
+                                                    <div key={lesson.id} className="rounded-2xl border border-gray-100 px-4 py-3 bg-gray-50/60">
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <p className="text-sm font-black text-gray-700 truncate">Chương {idx + 1}: {lesson.title}</p>
+                                                            <span className="text-[10px] font-black text-gray-500">{lesson.total_pages} trang</span>
+                                                        </div>
+                                                        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{lesson.description}</p>
+                                                        <div className="mt-3 flex items-center gap-2">
+                                                            <Link
+                                                                href={`/child/lesson?id=${lesson.id}`}
+                                                                className="flex-1 text-center py-2 rounded-xl border border-gray-200 text-gray-600 font-black text-xs hover:bg-white"
+                                                            >
+                                                                Học bài
+                                                            </Link>
+                                                            <Link
+                                                                href={`/child/quiz?lessonId=${lesson.id}&lessonTitle=${encodeURIComponent(lesson.title)}`}
+                                                                className="flex-1 text-center py-2 rounded-xl bg-purple-600 text-white font-black text-xs hover:bg-purple-700"
+                                                            >
+                                                                Làm kiểm tra
+                                                            </Link>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
+                </section>
+            </div>
+        )
+    }
+
+    if (!detailLesson) {
+        return (
+            <div className="min-h-full flex items-center justify-center">
+                <p className="text-gray-400 font-bold">Không tìm thấy bài học.</p>
+            </div>
+        )
+    }
+
+    const isTaskCompleted = detailSource === 'task' && detailTask?.status === 'completed'
+
+    return (
+        <div className="max-w-5xl mx-auto p-8 space-y-6">
+            <div className="flex items-center gap-3">
+                <Link href="/child/lesson" className="p-2.5 rounded-xl hover:bg-purple-50 text-gray-400 hover:text-purple-600 transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                    </svg>
+                </Link>
+                <div className="min-w-0">
+                    <p className="text-xs font-black uppercase tracking-widest text-purple-500">Chi tiết bài học</p>
+                    <h1 className="text-2xl font-black text-gray-800 truncate">{detailLesson.title}</h1>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-100 p-6 shadow-sm space-y-4">
+                    <div className="w-full rounded-2xl bg-gradient-to-r from-blue-50 to-purple-50 border border-purple-100 p-5">
+                        <p className="text-sm font-bold text-gray-600">{detailLesson.description}</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+                        <div className="rounded-2xl bg-gray-50 p-3">
+                            <p className="text-[10px] font-black uppercase text-gray-400">Tổng trang</p>
+                            <p className="text-lg font-black text-gray-800">{detailLesson.total_pages}</p>
+                        </div>
+                        <div className="rounded-2xl bg-gray-50 p-3">
+                            <p className="text-[10px] font-black uppercase text-gray-400">Câu hỏi</p>
+                            <p className="text-lg font-black text-gray-800">{quizCount}</p>
+                        </div>
+                        <div className="rounded-2xl bg-gray-50 p-3">
+                            <p className="text-[10px] font-black uppercase text-gray-400">Môn</p>
+                            <p className="text-sm font-black text-gray-800 line-clamp-1">{detailLesson.subjects?.name ?? 'Tổng hợp'}</p>
+                        </div>
+                        <div className="rounded-2xl bg-gray-50 p-3">
+                            <p className="text-[10px] font-black uppercase text-gray-400">Lớp</p>
+                            <p className="text-lg font-black text-gray-800">{detailLesson.subjects?.grade ?? '-'}</p>
                         </div>
                     </div>
-                    <p className="text-xs text-center text-blue-500 font-semibold">KEEP IT UP!</p>
+
+                    {detailLesson.pdf_url && (
+                        <a
+                            href={detailLesson.pdf_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-50 text-blue-700 font-black text-sm hover:bg-blue-100 transition-colors"
+                        >
+                            <span>📄</span>
+                            Xem tài liệu PDF
+                        </a>
+                    )}
                 </div>
-            )}
+
+                <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm space-y-4">
+                    <p className="text-xs font-black uppercase tracking-widest text-gray-400">Kiểm tra</p>
+
+                    {detailSource === 'task' && detailTask && (
+                        <div className="rounded-2xl bg-purple-50 border border-purple-100 p-4">
+                            <p className="text-xs font-black text-purple-500 uppercase tracking-widest">Session</p>
+                            <p className="text-sm font-bold text-purple-800 mt-1">Trang {detailTask.start_page} - {detailTask.end_page}</p>
+                            <p className="text-xs text-purple-500 mt-1">Pomodoro: {detailTask.session_duration_minutes} phút</p>
+                        </div>
+                    )}
+
+                    <div className="rounded-2xl border border-gray-100 p-4">
+                        <p className="text-sm font-bold text-gray-700">Sẵn sàng làm kiểm tra?</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                            {detailSource === 'task'
+                                ? 'Kết quả sẽ được lưu vào backend để hoàn thành nhiệm vụ và tạo phần thưởng.'
+                                : 'Chế độ tự học: làm bài luyện tập theo dữ liệu thật của môn học.'}
+                        </p>
+                    </div>
+
+                    <Link
+                        href={
+                            detailSource === 'task' && detailTask
+                                ? `/child/quiz?taskId=${detailTask.id}&lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}&duration=${detailTask.session_duration_minutes}`
+                                : `/child/quiz?lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}`
+                        }
+                        className={cn(
+                            'w-full inline-flex justify-center py-3.5 rounded-2xl font-black text-sm transition-all',
+                            quizCount > 0 ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-200' : 'bg-gray-100 text-gray-400 pointer-events-none'
+                        )}
+                    >
+                        {isTaskCompleted ? 'Làm lại kiểm tra' : 'Bắt đầu kiểm tra'}
+                    </Link>
+
+                    {quizCount === 0 && <p className="text-xs font-bold text-red-400 text-center">Bài học này chưa có câu hỏi để kiểm tra.</p>}
+                </div>
+            </div>
         </div>
+    )
+}
+
+export default function ChildLessonPage() {
+    return (
+        <Suspense
+            fallback={
+                <div className="min-h-full flex items-center justify-center">
+                    <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+            }
+        >
+            <LessonContent />
+        </Suspense>
     )
 }
