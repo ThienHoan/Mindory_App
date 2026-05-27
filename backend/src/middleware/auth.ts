@@ -1,6 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
 
+// Valid roles — whitelist to prevent unknown claim values escalating privileges
+const VALID_ROLES = ['admin', 'parent', 'child'] as const;
+type ValidRole = typeof VALID_ROLES[number];
+
+function normalizeRole(raw: unknown, fallback: ValidRole = 'parent'): ValidRole {
+    if (typeof raw === 'string' && (VALID_ROLES as readonly string[]).includes(raw)) {
+        return raw as ValidRole;
+    }
+    // Unknown claim value: log warning and fallback to least-privileged role
+    console.warn(`[auth] Unknown role value: "${raw}", falling back to "${fallback}"`);
+    return fallback;
+}
+
 // Extend Express Request to include user
 declare global {
     namespace Express {
@@ -8,7 +21,7 @@ declare global {
             user?: {
                 id: string;
                 email: string;
-                role: string;
+                role: ValidRole;
             };
         }
     }
@@ -32,7 +45,19 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
             return;
         }
 
-        // Fetch role from profiles table
+        // Priority 1: Read role from JWT app_metadata (zero extra DB query)
+        // app_metadata is set via Supabase Admin API: updateUserById(id, { app_metadata: { role } })
+        const claimRole = user.app_metadata?.role;
+        if (claimRole !== undefined && claimRole !== null) {
+            req.user = {
+                id: user.id,
+                email: user.email ?? '',
+                role: normalizeRole(claimRole),
+            };
+            return next();
+        }
+
+        // Priority 2: Fallback — query profiles table (for users not yet seeded via Admin API)
         const { data: profile } = await supabaseAdmin
             .from('profiles')
             .select('role')
@@ -42,7 +67,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
         req.user = {
             id: user.id,
             email: user.email ?? '',
-            role: profile?.role ?? 'parent',
+            role: normalizeRole(profile?.role),
         };
 
         next();

@@ -9,19 +9,19 @@ const router = Router();
 
 const createLessonSchema = z.object({
     subjectId: z.string().uuid(),
-    title: z.string().min(1),
-    description: z.string().optional(),
+    title: z.string().min(1).max(200),
+    description: z.string().max(1000).optional(),
     pdfUrl: z.string().url(),
     totalPages: z.number().int().min(1).optional().default(1),
 });
 const updateLessonSchema = z.object({
-    title: z.string().min(1).optional(),
-    description: z.string().optional(),
+    title: z.string().min(1).max(200).optional(),
+    description: z.string().max(1000).optional(),
     pdfUrl: z.string().url().optional(),
     totalPages: z.number().int().min(1).optional(),
 }).refine(d => d.title || d.description || d.pdfUrl || d.totalPages, { message: 'At least one field required' });
 
-// GET /lessons?subjectId=...
+// GET /lessons?subjectId=... — Public (used by Child/Parent)
 router.get('/', async (req, res) => {
     const { subjectId } = req.query;
     const from = (Math.max(1, Number(req.query.page) || 1) - 1) * Math.min(100, Number(req.query.limit) || 20);
@@ -35,6 +35,24 @@ router.get('/', async (req, res) => {
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({ data, total: count });
 });
+
+// GET /lessons/admin/list — Admin only (for management UI)
+router.get('/admin/list', authenticate, requireRole('admin'), async (req, res) => {
+    const { subjectId } = req.query;
+    const from = (Math.max(1, Number(req.query.page) || 1) - 1) * Math.min(100, Number(req.query.limit) || 20);
+    const to = from + Math.min(100, Number(req.query.limit) || 20) - 1;
+
+    let query = supabaseAdmin
+        .from('lessons')
+        .select('id, subject_id, title, description, pdf_url, total_pages, created_at, deleted_at, subjects(name, grade)', { count: 'exact' })
+        .order('created_at');
+    if (subjectId) query = query.eq('subject_id', String(subjectId));
+
+    const { data, error, count } = await query.range(from, to);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ data, total: count });
+});
+
 
 // GET /lessons/:id
 router.get('/:id', async (req, res) => {

@@ -19,7 +19,7 @@ const updateQuizSchema = z.object({
     correctIndex: z.number().int().min(0).max(3).optional(),
 }).refine(d => d.question || d.options || d.correctIndex !== undefined, { message: 'At least one field required' });
 
-// GET /quizzes?lessonId=...
+// GET /quizzes?lessonId=... — Public (used by Child/Parent during quiz)
 router.get('/', async (req, res) => {
     const { lessonId } = req.query;
     if (!lessonId) { res.status(400).json({ error: 'Missing required query param: lessonId' }); return; }
@@ -30,6 +30,19 @@ router.get('/', async (req, res) => {
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json(data);
 });
+
+// GET /quizzes/admin/list?lessonId=... — Admin only (for management UI)
+router.get('/admin/list', authenticate, requireRole('admin'), async (req, res) => {
+    const { lessonId } = req.query;
+    if (!lessonId) { res.status(400).json({ error: 'Missing required query param: lessonId' }); return; }
+
+    const { data, error } = await supabaseAdmin.from('quizzes')
+        .select('id, lesson_id, question, options, correct_index, created_at, deleted_at')
+        .eq('lesson_id', String(lessonId)).order('created_at');
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json(data);
+});
+
 
 // POST /quizzes — Admin
 router.post('/', authenticate, requireRole('admin'), validate(createQuizSchema), async (req, res) => {

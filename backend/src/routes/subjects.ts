@@ -7,13 +7,16 @@ import { requireRole } from '../middleware/requireRole';
 
 const router = Router();
 
-const createSubjectSchema = z.object({ name: z.string().min(1), grade: z.number().int().min(1).max(5) });
+const createSubjectSchema = z.object({
+    name: z.string().min(1).max(200),
+    grade: z.number().int().min(1).max(5),
+});
 const updateSubjectSchema = z.object({
-    name: z.string().min(1).optional(),
+    name: z.string().min(1).max(200).optional(),
     grade: z.number().int().min(1).max(5).optional(),
 }).refine(d => d.name || d.grade, { message: 'At least one field required' });
 
-// GET /subjects?grade=...
+// GET /subjects?grade=... — Public (used by Child/Parent to load lessons)
 router.get('/', async (req, res) => {
     const { grade } = req.query;
     const pageNum = Math.max(1, Number(req.query.page) || 1);
@@ -28,6 +31,25 @@ router.get('/', async (req, res) => {
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({ data, total: count });
 });
+
+// GET /subjects/admin/list — Admin only (includes all fields for management UI)
+router.get('/admin/list', authenticate, requireRole('admin'), async (req, res) => {
+    const { grade } = req.query;
+    const pageNum = Math.max(1, Number(req.query.page) || 1);
+    const limitNum = Math.min(100, Number(req.query.limit) || 20);
+    const from = (pageNum - 1) * limitNum;
+
+    let query = supabaseAdmin
+        .from('subjects')
+        .select('id, name, grade, created_at, deleted_at', { count: 'exact' })
+        .order('name');
+    if (grade) query = query.eq('grade', Number(grade));
+
+    const { data, error, count } = await query.range(from, from + limitNum - 1);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ data, total: count });
+});
+
 
 // POST /subjects — Admin only
 router.post('/', authenticate, requireRole('admin'), validate(createSubjectSchema), async (req, res) => {

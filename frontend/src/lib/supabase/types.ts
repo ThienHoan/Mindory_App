@@ -14,7 +14,7 @@ export interface Database {
                     id: string
                     email: string | null
                     full_name: string | null
-                    role: 'parent' | 'child'
+                    role: 'admin' | 'parent' | 'child'
                     parent_id: string | null
                     avatar_url: string | null
                     created_at: string
