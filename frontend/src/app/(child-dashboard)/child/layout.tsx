@@ -41,6 +41,16 @@ const navigation = [
         ),
     },
     {
+        name: 'Mini game',
+        href: '/child/games',
+        icon: (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 009 9.868v4.264a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20 12a8 8 0 11-16 0 8 8 0 0116 0z" />
+            </svg>
+        ),
+    },
+    {
         name: 'Hồ sơ',
         href: '/child/profile',
         icon: (

@@ -24,3 +24,89 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), "Segoe UI", "Noto Sans", sans-serif;
 }
+
+@keyframes ctm-float {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-10px) scale(1.03);
+  }
+}
+
+@keyframes ctm-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes ctm-fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ctm-gradient-wave {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes ctm-pop {
+  0% {
+    transform: scale(0.94);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.ctm-fade-up {
+  animation: ctm-fade-up 0.5s ease-out both;
+}
+
+.ctm-float {
+  animation: ctm-float 2.6s ease-in-out infinite;
+}
+
+.ctm-pop {
+  animation: ctm-pop 0.24s ease-out;
+}
+
+.ctm-gradient-wave {
+  background-size: 200% 200%;
+  animation: ctm-gradient-wave 8s ease infinite;
+}
+
+.ctm-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.ctm-shimmer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  background: linear-gradient(110deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: ctm-shimmer 2.8s linear infinite;
+}

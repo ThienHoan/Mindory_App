@@ -183,6 +183,13 @@ export default function ChildHomePage() {
                             <span>📝</span>
                             Làm kiểm tra ngay
                         </Link>
+                        <Link
+                            href="/child/games"
+                            className="mt-3 flex items-center justify-center gap-2 w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-sm font-black transition-all active:scale-95 shadow-lg shadow-emerald-200"
+                        >
+                            <span>🎮</span>
+                            Chơi mini game
+                        </Link>
                     </div>
 
                     <div className="bg-gradient-to-br from-purple-600 to-purple-500 rounded-3xl p-6 relative overflow-hidden shadow-lg shadow-purple-200">

@@ -59,6 +59,50 @@ export interface SessionFinishResult {
     }
 }
 
+export interface MiniGamePlayResult {
+    entry: {
+        id: string
+        child_id: string
+        game_id: string
+        score: number
+        accuracy: number
+        duration_seconds: number
+        stars_earned: number
+        played_at: string
+    }
+    currentStreak: number
+    bestStreak: number
+    totalStars: number
+}
+
+export interface MiniGameParentStats {
+    totalPlays: number
+    avgAccuracy: number
+    totalDurationSeconds: number
+    totalStars: number
+    byGame: Array<{
+        gameId: string
+        plays: number
+        avgScore: number
+        avgAccuracy: number
+        totalDurationSeconds: number
+        totalStars: number
+    }>
+    byChild: Array<{
+        childId: string
+        fullName: string | null
+        plays: number
+        avgScore: number
+        avgAccuracy: number
+        totalDurationSeconds: number
+        totalStars: number
+        currentStreak: number
+        bestStreak: number
+    }>
+    bestStreak: number
+    currentStreak: number
+}
+
 function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -226,5 +270,26 @@ export const api = {
             const raw = await requestJson<unknown>(`/lessons?subjectId=${encodeURIComponent(subjectId)}`, undefined, { cacheMs: 10000 })
             return normalizeListResponse<Lesson>(raw)
         }
+    },
+    miniGames: {
+        play: async (data: {
+            childId: string
+            gameId: string
+            score: number
+            accuracy: number
+            durationSeconds: number
+            starsEarned: number
+        }): Promise<MiniGamePlayResult> => {
+            const raw = await requestJson<unknown>('/mini-games/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            })
+            return normalizeObjectResponse<MiniGamePlayResult>(raw)
+        },
+        stats: async (parentId: string): Promise<MiniGameParentStats> => {
+            const raw = await requestJson<unknown>(`/mini-games/stats?parentId=${encodeURIComponent(parentId)}`, undefined, { cacheMs: 5000 })
+            return normalizeObjectResponse<MiniGameParentStats>(raw)
+        },
     }
 }

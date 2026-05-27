@@ -5,13 +5,14 @@ import { useEffect, useMemo, useState } from 'react'
 import {
     AcademicCapIcon,
     CheckCircleIcon,
+    FireIcon,
     GiftIcon,
     SparklesIcon,
     StarIcon,
     TrophyIcon,
 } from '@heroicons/react/24/outline'
 import { createClient } from '@/lib/supabase/client'
-import { api } from '@/lib/api-client'
+import { api, MiniGameParentStats } from '@/lib/api-client'
 
 interface ChildProfile {
     id: string
@@ -38,6 +39,7 @@ export default function ParentDashboardPage() {
     const [selectedChild, setSelectedChild] = useState('')
     const [children, setChildren] = useState<ChildProfile[]>([])
     const [stats, setStats] = useState<ParentStats | null>(null)
+    const [miniGameStats, setMiniGameStats] = useState<MiniGameParentStats | null>(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
@@ -54,8 +56,9 @@ export default function ParentDashboardPage() {
                     return
                 }
 
-                const [statsData, childrenResponse] = await Promise.all([
+                const [statsData, miniStatsData, childrenResponse] = await Promise.all([
                     api.sessions.stats(user.id),
+                    api.miniGames.stats(user.id),
                     supabase
                         .from('profiles')
                         .select('id, full_name, email')
@@ -66,6 +69,7 @@ export default function ParentDashboardPage() {
                 if (!isMounted) return
 
                 setStats(statsData as ParentStats)
+                setMiniGameStats(miniStatsData)
 
                 const fetchedChildren = (childrenResponse.data as ChildProfile[] | null) ?? []
                 setChildren(fetchedChildren)
@@ -93,14 +97,14 @@ export default function ParentDashboardPage() {
     const statCards = [
         {
             label: 'Điểm tích lũy',
-            value: '1,250',
+            value: `${miniGameStats?.totalStars ?? 0}`,
             icon: StarIcon,
             colorClass: 'border-emerald-200 bg-emerald-50/80 text-emerald-600',
         },
         {
-            label: 'Hạng tuần',
-            value: '#5',
-            icon: TrophyIcon,
+            label: 'Chuỗi mini game',
+            value: `${miniGameStats?.currentStreak ?? 0} ngày`,
+            icon: FireIcon,
             colorClass: 'border-amber-200 bg-amber-50/80 text-amber-600',
         },
         {
@@ -108,6 +112,12 @@ export default function ParentDashboardPage() {
             value: `${stats?.totalSessions ?? 0}`,
             icon: CheckCircleIcon,
             colorClass: 'border-sky-200 bg-sky-50/80 text-sky-600',
+        },
+        {
+            label: 'Độ chính xác game',
+            value: `${miniGameStats?.avgAccuracy ?? 0}%`,
+            icon: TrophyIcon,
+            colorClass: 'border-violet-200 bg-violet-50/80 text-violet-600',
         },
     ]
 
@@ -171,7 +181,7 @@ export default function ParentDashboardPage() {
                 </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 {statCards.map((card) => (
                     <article key={card.label} className={`rounded-3xl border px-5 py-4 shadow-sm ${card.colorClass}`}>
                         <p className="text-sm font-semibold">{card.label}</p>
@@ -252,6 +262,14 @@ export default function ParentDashboardPage() {
                             <p className="mt-1 text-sm text-slate-500">
                                 Tập trung trung bình: {stats?.avgFocusMinutes ?? 0} phút, điểm quiz: {stats?.avgQuizScore ?? 0}%.
                             </p>
+                            <p className="mt-2 text-sm text-slate-500">
+                                Mini game: {miniGameStats?.totalPlays ?? 0} lượt, {Math.round((miniGameStats?.totalDurationSeconds ?? 0) / 60)} phút chơi.
+                            </p>
+                            {miniGameStats?.byGame?.[0] && (
+                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                    Game chơi nhiều nhất: <span className="text-slate-700">{miniGameStats.byGame[0].gameId}</span> ({miniGameStats.byGame[0].plays} lượt)
+                                </p>
+                            )}
                         </div>
                     </div>
                 </article>
