@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Image from 'next/image'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { api } from '@/lib/api-client'
@@ -45,7 +47,7 @@ function useAudioControls(): AudioControls {
 
     const initContext = useCallback(async () => {
         if (typeof window === 'undefined') return null
-        if (!audioContextRef.current) {
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
             audioContextRef.current = new window.AudioContext()
         }
         if (audioContextRef.current.state === 'suspended') {
@@ -113,8 +115,10 @@ function useAudioControls(): AudioControls {
     useEffect(() => {
         return () => {
             stopMusic()
-            if (audioContextRef.current) {
-                void audioContextRef.current.close()
+            const ctx = audioContextRef.current
+            audioContextRef.current = null
+            if (ctx && ctx.state !== 'closed') {
+                void ctx.close().catch(() => undefined)
             }
         }
     }, [stopMusic])
@@ -122,90 +126,331 @@ function useAudioControls(): AudioControls {
     return { musicOn, toggleMusic, playTone, playSuccess, playError }
 }
 
+interface MathQuestion {
+    prompt: string
+    options: [string, string, string, string]
+    correctIndex: number
+    voiceText?: string
+}
+
+interface MathLevel {
+    title: string
+    cheer: string
+    stars: number
+    questions: MathQuestion[]
+}
+
+const MATH_LEVELS: MathLevel[] = [
+    {
+        title: 'Màn 1: Đếm số',
+        cheer: 'Mình bắt đầu với đếm số nhé!',
+        stars: 6,
+        questions: [
+            { prompt: 'Số nào đứng sau số 8?', options: ['6', '7', '9', '10'], correctIndex: 2 },
+            { prompt: 'Số nào đứng trước số 15?', options: ['12', '14', '16', '18'], correctIndex: 1 },
+            { prompt: 'Điền số còn thiếu: 2, 4, 6, ?', options: ['7', '8', '9', '10'], correctIndex: 1 },
+            { prompt: 'Số lớn nhất là số nào?', options: ['11', '9', '13', '10'], correctIndex: 2 },
+        ],
+    },
+    {
+        title: 'Màn 2: So sánh',
+        cheer: 'Giờ mình học lớn hơn, nhỏ hơn nào!',
+        stars: 7,
+        questions: [
+            { prompt: 'Chọn dấu đúng: 12 __ 9', options: ['<', '>', '=', '?'], correctIndex: 1 },
+            { prompt: 'Chọn dấu đúng: 7 __ 7', options: ['<', '>', '=', '+'], correctIndex: 2 },
+            { prompt: 'Số nào bé hơn 20?', options: ['22', '21', '19', '24'], correctIndex: 2 },
+            { prompt: 'Số nào lớn hơn 35?', options: ['30', '29', '33', '40'], correctIndex: 3 },
+        ],
+    },
+    {
+        title: 'Màn 3: Hình dạng',
+        cheer: 'Bây giờ nhận biết các hình cơ bản nhé!',
+        stars: 8,
+        questions: [
+            { prompt: 'Hình có 3 cạnh là hình gì?', options: ['Hình vuông', 'Hình tam giác', 'Hình tròn', 'Hình chữ nhật'], correctIndex: 1 },
+            { prompt: 'Hình nào không có cạnh?', options: ['Hình tròn', 'Hình tam giác', 'Hình vuông', 'Hình ngũ giác'], correctIndex: 0 },
+            { prompt: 'Hình vuông có mấy cạnh?', options: ['2', '3', '4', '5'], correctIndex: 2 },
+            { prompt: 'Hình chữ nhật có mấy góc vuông?', options: ['1', '2', '3', '4'], correctIndex: 3 },
+        ],
+    },
+    {
+        title: 'Màn 4: Cộng trừ',
+        cheer: 'Mình làm phép cộng trừ đơn giản nha!',
+        stars: 9,
+        questions: [
+            { prompt: '7 + 5 = ?', options: ['11', '12', '13', '14'], correctIndex: 1 },
+            { prompt: '15 - 6 = ?', options: ['7', '8', '9', '10'], correctIndex: 2 },
+            { prompt: '9 + 8 = ?', options: ['15', '16', '17', '18'], correctIndex: 2 },
+            { prompt: '20 - 9 = ?', options: ['9', '10', '11', '12'], correctIndex: 2 },
+        ],
+    },
+    {
+        title: 'Màn 5: Phép nhân',
+        cheer: 'Tiếp theo là bảng nhân nhé!',
+        stars: 10,
+        questions: [
+            { prompt: '3 × 4 = ?', options: ['7', '10', '12', '14'], correctIndex: 2 },
+            { prompt: '5 × 2 = ?', options: ['8', '10', '12', '15'], correctIndex: 1 },
+            { prompt: '6 × 3 = ?', options: ['15', '16', '17', '18'], correctIndex: 3 },
+            { prompt: '9 × 2 = ?', options: ['18', '16', '14', '12'], correctIndex: 0 },
+        ],
+    },
+    {
+        title: 'Màn 6: Phép chia',
+        cheer: 'Màn cuối rồi, mình chia số thật tốt nào!',
+        stars: 12,
+        questions: [
+            { prompt: '12 ÷ 3 = ?', options: ['3', '4', '5', '6'], correctIndex: 1 },
+            { prompt: '18 ÷ 2 = ?', options: ['7', '8', '9', '10'], correctIndex: 2 },
+            { prompt: '20 ÷ 5 = ?', options: ['2', '3', '4', '5'], correctIndex: 2 },
+            { prompt: '24 ÷ 6 = ?', options: ['2', '3', '4', '5'], correctIndex: 2 },
+        ],
+    },
+]
+
 function NumberChaseGame({ onReportPlay, audio }: { onReportPlay: (payload: PlayReportPayload) => void; audio: AudioControls }) {
-    const [sequence, setSequence] = useState<number[]>(() => Array.from({ length: 9 }, (_, i) => i + 1))
-    const [nextNumber, setNextNumber] = useState(1)
-    const [message, setMessage] = useState('Chạm đúng theo thứ tự 1 → 9 nhé!')
-    const [wrongPicks, setWrongPicks] = useState(0)
-    const roundStartRef = useRef(Date.now())
+    const [levelIndex, setLevelIndex] = useState(0)
+    const [questionIndex, setQuestionIndex] = useState(0)
+    const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+    const [correctCount, setCorrectCount] = useState(0)
+    const [wrongCount, setWrongCount] = useState(0)
+    const [feedback, setFeedback] = useState('Chọn đáp án đúng trong các ô nhé!')
+    const [completedLevel, setCompletedLevel] = useState(false)
+    const [speechOn, setSpeechOn] = useState(true)
+    const voiceListRef = useRef<SpeechSynthesisVoice[]>([])
+    const nextQuestionTimerRef = useRef<number | null>(null)
+    const levelStartRef = useRef(0)
+
+    const level = MATH_LEVELS[levelIndex]
+    const question = level.questions[questionIndex]
+    const isFinalLevel = levelIndex >= MATH_LEVELS.length - 1
+    const globalProgress = Math.round((((levelIndex * level.questions.length) + questionIndex) / (MATH_LEVELS.length * level.questions.length)) * 100)
+
+    const speakText = useCallback((text: string) => {
+        if (!speechOn || typeof window === 'undefined' || !('speechSynthesis' in window)) return
+        const synth = window.speechSynthesis
+        const utterance = new SpeechSynthesisUtterance(text)
+        utterance.lang = 'vi-VN'
+        utterance.rate = 0.95
+        utterance.pitch = 1.06
+        const voices = voiceListRef.current.length > 0 ? voiceListRef.current : synth.getVoices()
+        const preferred =
+            voices.find((v) => /google/i.test(v.name) && /vi/i.test(v.lang)) ??
+            voices.find((v) => /vi/i.test(v.lang)) ??
+            voices.find((v) => /google/i.test(v.name))
+        if (preferred) utterance.voice = preferred
+        synth.cancel()
+        synth.speak(utterance)
+    }, [speechOn])
 
     useEffect(() => {
-        setSequence(shuffleArray(Array.from({ length: 9 }, (_, i) => i + 1)))
+        levelStartRef.current = Date.now()
     }, [])
 
-    const resetRound = useCallback(() => {
-        setSequence(shuffleArray(Array.from({ length: 9 }, (_, i) => i + 1)))
-        setNextNumber(1)
-        setWrongPicks(0)
-        roundStartRef.current = Date.now()
+    useEffect(() => {
+        if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+        const synth = window.speechSynthesis
+        const assignVoices = () => {
+            voiceListRef.current = synth.getVoices()
+        }
+        assignVoices()
+        synth.addEventListener('voiceschanged', assignVoices)
+        return () => synth.removeEventListener('voiceschanged', assignVoices)
     }, [])
 
-    const handlePick = (value: number) => {
-        if (value !== nextNumber) {
-            audio.playError()
-            setWrongPicks((prev) => prev + 1)
-            setMessage(`Thử lại nhé! Bé cần chọn số ${nextNumber}.`)
+    useEffect(() => {
+        speakText(`${level.title}. ${level.cheer}`)
+    }, [level.cheer, level.title, speakText])
+
+    useEffect(() => {
+        if (completedLevel) return
+        const text = question.voiceText ?? `Câu ${questionIndex + 1}. ${question.prompt}`
+        speakText(text)
+    }, [completedLevel, question, questionIndex, speakText])
+
+    useEffect(() => {
+        return () => {
+            if (nextQuestionTimerRef.current !== null) {
+                window.clearTimeout(nextQuestionTimerRef.current)
+            }
+        }
+    }, [])
+
+    const reportLevel = useCallback((finalCorrectCount: number, finalWrongCount: number) => {
+        const totalQuestions = level.questions.length
+        const accuracy = Math.round((finalCorrectCount / totalQuestions) * 100)
+        const duration = Math.max(8, Math.round((Date.now() - levelStartRef.current) / 1000))
+        const score = Math.max(25, finalCorrectCount * 30 - finalWrongCount * 5 + levelIndex * 20)
+        const starsEarned = Math.max(4, Math.round((level.stars * accuracy) / 100))
+
+        onReportPlay({
+            gameId: 'number',
+            score,
+            accuracy,
+            durationSeconds: duration,
+            starsEarned,
+        })
+    }, [level.questions.length, level.stars, levelIndex, onReportPlay])
+
+    const resetLevel = useCallback(() => {
+        setQuestionIndex(0)
+        setSelectedIndex(null)
+        setCorrectCount(0)
+        setWrongCount(0)
+        setCompletedLevel(false)
+        setFeedback('Chọn đáp án đúng trong các ô nhé!')
+        levelStartRef.current = Date.now()
+    }, [])
+
+    const resetAll = useCallback(() => {
+        setLevelIndex(0)
+        setQuestionIndex(0)
+        setSelectedIndex(null)
+        setCorrectCount(0)
+        setWrongCount(0)
+        setCompletedLevel(false)
+        setFeedback('Chọn đáp án đúng trong các ô nhé!')
+        levelStartRef.current = Date.now()
+    }, [])
+
+    const goToNextLevel = useCallback(() => {
+        if (isFinalLevel) {
+            resetAll()
             return
         }
+        setLevelIndex((prev) => prev + 1)
+        setQuestionIndex(0)
+        setSelectedIndex(null)
+        setCorrectCount(0)
+        setWrongCount(0)
+        setCompletedLevel(false)
+        setFeedback('Chọn đáp án đúng trong các ô nhé!')
+        levelStartRef.current = Date.now()
+    }, [isFinalLevel, resetAll])
 
-        void audio.playTone(360 + value * 35, 0.1, 'square', 0.08)
-        if (value === 9) {
+    const handleSelect = (index: number) => {
+        if (selectedIndex !== null || completedLevel) return
+        setSelectedIndex(index)
+
+        const isCorrect = index === question.correctIndex
+        const nextCorrectCount = isCorrect ? correctCount + 1 : correctCount
+        const nextWrongCount = isCorrect ? wrongCount : wrongCount + 1
+        if (isCorrect) {
             audio.playSuccess()
-            const duration = Math.max(5, Math.round((Date.now() - roundStartRef.current) / 1000))
-            const accuracy = Math.round((9 / (9 + wrongPicks)) * 100)
-            onReportPlay({
-                gameId: 'number',
-                score: Math.max(10, 100 - wrongPicks * 8),
-                accuracy,
-                durationSeconds: duration,
-                starsEarned: 8,
-            })
-            setMessage('Giỏi quá! Bé vừa hoàn thành màn bắt số.')
-            setTimeout(() => {
-                resetRound()
-                setMessage('Màn mới bắt đầu!')
-            }, 900)
-            return
+            setCorrectCount(nextCorrectCount)
+            setFeedback('Chính xác rồi! Bé làm rất tốt!')
+            speakText('Đúng rồi, giỏi lắm con!')
+        } else {
+            audio.playError()
+            setWrongCount(nextWrongCount)
+            setFeedback(`Chưa đúng. Đáp án đúng là: ${question.options[question.correctIndex]}.`)
+            speakText(`Mình thử lại nhé. Đáp án đúng là ${question.options[question.correctIndex]}.`)
         }
 
-        setNextNumber((prev) => prev + 1)
-        setMessage(`Tuyệt vời! Tiếp theo chọn số ${value + 1}.`)
+        nextQuestionTimerRef.current = window.setTimeout(() => {
+            const isLastQuestion = questionIndex >= level.questions.length - 1
+            if (isLastQuestion) {
+                setCompletedLevel(true)
+                reportLevel(nextCorrectCount, nextWrongCount)
+                if (isFinalLevel) {
+                    speakText('Con đã hoàn thành toàn bộ màn toán học. Tuyệt vời!')
+                } else {
+                    speakText(`Con đã xong ${level.title}. Chuẩn bị qua màn mới nhé!`)
+                }
+            } else {
+                setQuestionIndex((prev) => prev + 1)
+                setSelectedIndex(null)
+                setFeedback('Chọn đáp án đúng trong các ô nhé!')
+            }
+        }, 900)
     }
 
     return (
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-black/5">
             <div className="mb-4 flex items-center justify-between gap-3">
-                <h3 className="text-xl font-black text-slate-800">Bắt Số Nhanh</h3>
-                <button
-                    type="button"
-                    onClick={resetRound}
-                    className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"
-                >
-                    Chơi lại
-                </button>
+                <h3 className="text-xl font-black text-slate-800">Toán Học Nhiều Màn</h3>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setSpeechOn((prev) => !prev)}
+                        className={cn(
+                            'rounded-xl border px-3 py-2 text-xs font-black',
+                            speechOn ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-600'
+                        )}
+                    >
+                        {speechOn ? '🔊 Chị Google bật' : '🔈 Chị Google tắt'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={resetLevel}
+                        className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"
+                    >
+                        Chơi lại màn
+                    </button>
+                </div>
             </div>
-            <p className="mb-4 rounded-2xl bg-sky-50 px-4 py-3 text-sm font-bold text-sky-700">{message}</p>
-            <div className="grid grid-cols-3 gap-3">
-                {sequence.map((num) => {
-                    const passed = num < nextNumber
-                    return (
+
+            <div className="mb-4 rounded-2xl bg-indigo-50 px-4 py-3">
+                <p className="text-sm font-black text-indigo-700">{level.title}</p>
+                <p className="mt-1 text-xs font-bold text-indigo-500">
+                    Câu {questionIndex + 1}/{level.questions.length} • Màn {levelIndex + 1}/{MATH_LEVELS.length} • Tiến độ {globalProgress}%
+                </p>
+            </div>
+
+            {!completedLevel ? (
+                <>
+                    <div className="rounded-2xl bg-sky-50 px-4 py-4">
+                        <p className="text-lg font-black text-slate-800">{question.prompt}</p>
                         <button
-                            key={num}
                             type="button"
-                            disabled={passed}
-                            onClick={() => handlePick(num)}
-                            className={cn(
-                                'h-20 rounded-2xl text-2xl font-black transition-all',
-                                passed
-                                    ? 'cursor-default bg-emerald-100 text-emerald-500'
-                                    : 'bg-indigo-500 text-white shadow-md hover:-translate-y-0.5 hover:bg-indigo-600'
-                            )}
+                            onClick={() => speakText(question.voiceText ?? question.prompt)}
+                            className="mt-2 rounded-full bg-white px-3 py-1 text-xs font-black text-sky-600 hover:bg-sky-100"
                         >
-                            {num}
+                            🔁 Đọc lại câu hỏi
                         </button>
-                    )
-                })}
-            </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {question.options.map((option, index) => {
+                            let style = 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300 hover:bg-indigo-50'
+                            if (selectedIndex !== null) {
+                                if (index === question.correctIndex) style = 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                                else if (index === selectedIndex) style = 'border-rose-300 bg-rose-50 text-rose-700'
+                                else style = 'border-slate-100 bg-slate-50 text-slate-400'
+                            }
+                            return (
+                                <button
+                                    key={option}
+                                    type="button"
+                                    disabled={selectedIndex !== null}
+                                    onClick={() => handleSelect(index)}
+                                    className={cn('min-h-20 rounded-2xl border-2 px-4 py-3 text-left text-base font-black transition-all', style)}
+                                >
+                                    {option}
+                                </button>
+                            )
+                        })}
+                    </div>
+
+                    <p className="mt-4 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">{feedback}</p>
+                </>
+            ) : (
+                <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 text-center">
+                    <p className="text-sm font-black uppercase tracking-widest text-emerald-600">Hoàn thành màn</p>
+                    <h4 className="mt-1 text-2xl font-black text-emerald-700">{level.title}</h4>
+                    <p className="mt-3 text-sm font-bold text-emerald-700">
+                        Bé đúng {correctCount}/{level.questions.length} câu • Sai {wrongCount} câu
+                    </p>
+                    <button
+                        type="button"
+                        onClick={goToNextLevel}
+                        className="mt-5 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                    >
+                        {isFinalLevel ? 'Chơi lại từ màn 1' : 'Qua màn tiếp theo'}
+                    </button>
+                </div>
+            )}
         </div>
     )
 }
@@ -1079,169 +1324,185 @@ function ColorMixGame({ onReportPlay, audio }: { onReportPlay: (payload: PlayRep
 }
 
 const GAME_TABS: Array<{ id: GameId; emoji: string; title: string; desc: string }> = [
-    { id: 'number', emoji: '🔢', title: 'Toán Học', desc: 'Bắt số nhanh' },
+    { id: 'number', emoji: '🔢', title: 'Toán Học', desc: 'Nhiều màn với ô đáp án' },
     { id: 'memory', emoji: '🧠', title: 'Tư Duy', desc: 'Lật thẻ ghi nhớ' },
     { id: 'music', emoji: '🎵', title: 'Âm Nhạc', desc: 'Nhắc lại giai điệu' },
     { id: 'maze', emoji: '🧭', title: 'Kỹ Năng Sống', desc: 'Mê cung phiêu lưu' },
     { id: 'color', emoji: '🎨', title: 'Mỹ Thuật', desc: 'Pha màu kỳ diệu' },
 ]
 
-const GAME_NODE_STYLES: Record<GameId, { ring: string; ribbon: string }> = {
-    number: { ring: 'border-orange-400', ribbon: 'from-violet-500 to-violet-700' },
-    memory: { ring: 'border-orange-400', ribbon: 'from-rose-500 to-rose-700' },
-    music: { ring: 'border-orange-400', ribbon: 'from-red-500 to-red-700' },
-    maze: { ring: 'border-orange-400', ribbon: 'from-cyan-500 to-cyan-700' },
-    color: { ring: 'border-orange-400', ribbon: 'from-purple-500 to-purple-700' },
-}
-
-interface GameSubOption {
-    key: string
-    label: string
-    emoji: string
-    gameId: GameId
-}
-
 interface GameMapNode {
-    key: string
+    slug: string
     label: string
-    emoji: string
+    imageUrl: string
     gameId: GameId
     top: string
     left: string
-    subs: GameSubOption[]
+    subs: Array<{ slug: string; label: string; imageUrl: string }>
 }
 
 const GAME_MAP_NODES: GameMapNode[] = [
     {
-        key: 'logic',
+        slug: 'tu-duy',
         label: 'Tư Duy',
-        emoji: '🧠',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/tu_duy.webp',
         gameId: 'memory',
-        top: '28%',
+        top: '30%',
         left: '17%',
         subs: [
-            { key: 'logic-rules', label: 'Quy Luật', emoji: '🧩', gameId: 'memory' },
-            { key: 'logic-diff', label: 'Điểm khác biệt', emoji: '🔍', gameId: 'memory' },
-            { key: 'logic-shape', label: 'Hình khác biệt', emoji: '🔶', gameId: 'memory' },
-            { key: 'logic-connect', label: 'Nối điểm trí tuệ', emoji: '🧷', gameId: 'maze' },
-            { key: 'logic-maze', label: 'Mê Cung', emoji: '🧭', gameId: 'maze' },
+            { slug: 'find-pattern', label: 'Quy Luật', imageUrl: 'https://assets.cuthongminh.com/games/find-pattern/logo.webp' },
+            { slug: 'mini-sudoku-kids', label: 'Sudoku', imageUrl: 'https://assets.cuthongminh.com/games/mini-sudoku-kids/logo.webp' },
+            { slug: 'find-differences', label: 'Điểm khác biệt', imageUrl: 'https://assets.cuthongminh.com/games/game-4-logo.webp' },
+            { slug: 'line-connect', label: 'Nối Điểm Trí Tuệ', imageUrl: 'https://assets.cuthongminh.com/games/line-connect/logo.webp' },
+            { slug: 'odd-one-out', label: 'Hình khác biệt', imageUrl: 'https://assets.cuthongminh.com/games/odd-one-out/logo.webp' },
+            { slug: 'maze-runner', label: 'Mê Cung', imageUrl: 'https://assets.cuthongminh.com/games/maze-runner/logo.webp' },
         ],
     },
     {
-        key: 'art',
+        slug: 'my-thuat',
         label: 'Mỹ Thuật',
-        emoji: '🎨',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/ve.webp',
         gameId: 'color',
-        top: '28%',
+        top: '30%',
         left: '41%',
         subs: [
-            { key: 'art-mix', label: 'Pha màu', emoji: '🎨', gameId: 'color' },
-            { key: 'art-guess', label: 'Phối sắc', emoji: '🖌️', gameId: 'color' },
-            { key: 'art-memory', label: 'Màu ghi nhớ', emoji: '🌈', gameId: 'memory' },
+            { slug: 'learn-color', label: 'Học Màu Sắc', imageUrl: 'https://assets.cuthongminh.com/games/learn-color-color.webp' },
+            { slug: 'mix-color', label: 'Pha Màu', imageUrl: 'https://assets.cuthongminh.com/games/learn-color-color.webp' },
+            { slug: 'paint-picture', label: 'Tô Màu', imageUrl: 'https://assets.cuthongminh.com/games/paint-picture/logo.webp' },
         ],
     },
     {
-        key: 'life',
+        slug: 'ky-nang-song',
         label: 'Kỹ Năng Sống',
-        emoji: '🧭',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/ky_nang_song.webp',
         gameId: 'maze',
-        top: '28%',
+        top: '30%',
         left: '64%',
         subs: [
-            { key: 'life-maze', label: 'Đường về nhà', emoji: '🏠', gameId: 'maze' },
-            { key: 'life-route', label: 'Chọn lối an toàn', emoji: '🛣️', gameId: 'maze' },
-            { key: 'life-memory', label: 'Tình huống đúng', emoji: '✅', gameId: 'memory' },
+            { slug: 'learn-vehicle', label: 'Phương tiện', imageUrl: 'https://assets.cuthongminh.com/games/learn-vehicle/logo.webp' },
+            { slug: 'learn-occupation', label: 'Nghề nghiệp', imageUrl: 'https://assets.cuthongminh.com/games/learn-occupation/logo.webp' },
+            { slug: 'learn-hygiene', label: 'Vệ sinh cá nhân', imageUrl: 'https://assets.cuthongminh.com/games/learn-hygiene/logo.webp' },
+            { slug: 'learn-traffic', label: 'An Toàn Giao Thông', imageUrl: 'https://assets.cuthongminh.com/games/learn-traffic/logo.webp' },
+            { slug: 'learn-emotion', label: 'Cảm Xúc', imageUrl: 'https://assets.cuthongminh.com/games/learn-emotion/logo.webp' },
+            { slug: 'learn-clock', label: 'Xem Đồng Hồ', imageUrl: 'https://assets.cuthongminh.com/games/learn-clock/logo-main.webp' },
         ],
     },
     {
-        key: 'geo',
-        label: 'Địa Lý',
-        emoji: '🌍',
+        slug: 'dia-ly-tu-nhien',
+        label: 'Địa Lý Tự Nhiên',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/dia_ly.webp',
         gameId: 'maze',
-        top: '28%',
+        top: '30%',
         left: '86%',
         subs: [
-            { key: 'geo-map', label: 'Bản đồ nhỏ', emoji: '🗺️', gameId: 'maze' },
-            { key: 'geo-place', label: 'Địa danh', emoji: '🏞️', gameId: 'memory' },
-            { key: 'geo-flag', label: 'Cờ quốc gia', emoji: '🏳️', gameId: 'memory' },
+            { slug: 'learn-flag', label: 'Cờ quốc gia', imageUrl: 'https://assets.cuthongminh.com/games/learn-flag/logo.webp' },
+            { slug: 'learn-landmark', label: 'Địa Danh Nổi Tiếng', imageUrl: 'https://assets.cuthongminh.com/games/learn-landmark/logo.webp' },
+            { slug: 'learn-costume', label: 'Trang Phục Thế Giới', imageUrl: 'https://assets.cuthongminh.com/games/learn-costume/logo.webp' },
+            { slug: 'learn-terrain', label: 'Địa Hình', imageUrl: 'https://assets.cuthongminh.com/games/learn-terrain/logo.webp' },
         ],
     },
     {
-        key: 'music',
+        slug: 'am-nhac',
         label: 'Âm Nhạc',
-        emoji: '🎵',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/am_nhac.webp',
         gameId: 'music',
-        top: '55%',
+        top: '58%',
         left: '18%',
         subs: [
-            { key: 'music-repeat', label: 'Nhắc giai điệu', emoji: '🎵', gameId: 'music' },
-            { key: 'music-note', label: 'Nốt nhạc', emoji: '🎼', gameId: 'music' },
-            { key: 'music-quick', label: 'Nghe nhanh', emoji: '🎧', gameId: 'music' },
+            { slug: 'learn-instrument', label: 'Nhạc cụ', imageUrl: 'https://assets.cuthongminh.com/games/learn-instrument/logo.webp' },
+            { slug: 'mini-piano', label: 'Đàn Piano Tí Hon', imageUrl: 'https://assets.cuthongminh.com/games/mini-piano/logo.webp' },
+            { slug: 'learn-notes', label: 'Học Nốt Nhạc', imageUrl: 'https://assets.cuthongminh.com/games/learn-notes/logo.webp' },
         ],
     },
     {
-        key: 'science',
+        slug: 'khoa-hoc',
         label: 'Khoa Học',
-        emoji: '🔬',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/khoa_hoc.webp',
         gameId: 'memory',
-        top: '55%',
+        top: '58%',
         left: '41%',
         subs: [
-            { key: 'sci-find', label: 'Tìm cặp thí nghiệm', emoji: '🔬', gameId: 'memory' },
-            { key: 'sci-order', label: 'Sắp xếp quy trình', emoji: '⚗️', gameId: 'number' },
-            { key: 'sci-maze', label: 'Khám phá tự nhiên', emoji: '🌿', gameId: 'maze' },
+            { slug: 'learn-animal', label: 'Động vật', imageUrl: 'https://assets.cuthongminh.com/games/learn-animal/logo.webp' },
+            { slug: 'learn-fruit', label: 'Trái cây', imageUrl: 'https://assets.cuthongminh.com/games/learn-fruit/logo.webp' },
+            { slug: 'learn-food', label: 'Món ăn', imageUrl: 'https://assets.cuthongminh.com/games/learn-food/logo.webp' },
+            { slug: 'learn-dinosaur', label: 'Khủng long', imageUrl: 'https://assets.cuthongminh.com/games/learn-dinosaur/logo.webp' },
+            { slug: 'learn-flower', label: 'Hoa & Cây', imageUrl: 'https://assets.cuthongminh.com/games/learn-flower/logo.webp' },
+            { slug: 'learn-weather', label: 'Thời tiết', imageUrl: 'https://assets.cuthongminh.com/games/learn-weather/logo.webp' },
         ],
     },
     {
-        key: 'language',
+        slug: 'ngon-ngu',
         label: 'Ngôn Ngữ',
-        emoji: '🔤',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/ngon_ngu.webp',
         gameId: 'memory',
-        top: '55%',
+        top: '58%',
         left: '64%',
         subs: [
-            { key: 'lang-alphabet', label: 'Bảng chữ cái', emoji: '🔤', gameId: 'memory' },
-            { key: 'lang-word', label: 'Ghép từ', emoji: '📝', gameId: 'number' },
-            { key: 'lang-sound', label: 'Nghe và chọn', emoji: '🔊', gameId: 'music' },
+            { slug: 'learn-word', label: 'Học Từ Vựng', imageUrl: 'https://assets.cuthongminh.com/games/learn-word/logo.webp' },
+            { slug: 'learn-tones', label: 'Học Dấu Tiếng Việt', imageUrl: 'https://assets.cuthongminh.com/games/learn-tones/logo.webp' },
+            { slug: 'learn-alphabet', label: 'Bảng chữ cái', imageUrl: 'https://assets.cuthongminh.com/games/learn-alphabet/logo.webp' },
+            { slug: 'learn-syllable', label: 'Ghép Vần', imageUrl: 'https://assets.cuthongminh.com/games/learn-syllable/logo.webp' },
         ],
     },
     {
-        key: 'math',
+        slug: 'toan-hoc',
         label: 'Toán Học',
-        emoji: '🔢',
+        imageUrl: 'https://assets.cuthongminh.com/games/home/toan.webp',
         gameId: 'number',
-        top: '55%',
+        top: '58%',
         left: '86%',
         subs: [
-            { key: 'math-fast', label: 'Bắt số', emoji: '🔢', gameId: 'number' },
-            { key: 'math-memory', label: 'Số ghi nhớ', emoji: '🧠', gameId: 'memory' },
-            { key: 'math-maze', label: 'Lối đi phép tính', emoji: '➕', gameId: 'maze' },
+            { slug: 'learn-numbers', label: 'Đếm số', imageUrl: 'https://assets.cuthongminh.com/games/learn-numbers/number-logo.webp' },
+            { slug: 'compare-quantity', label: 'So sánh', imageUrl: 'https://assets.cuthongminh.com/games/game-3-logo.webp' },
+            { slug: 'learn-shape', label: 'Hình dạng', imageUrl: 'https://assets.cuthongminh.com/games/learn-shape/learn-shape-logo.webp' },
+            { slug: 'learn-math', label: 'Toán đơn giản', imageUrl: 'https://assets.cuthongminh.com/games/learn-math/logo.webp' },
+            { slug: 'learn-multiply', label: 'Phép Nhân', imageUrl: 'https://assets.cuthongminh.com/games/learn-multiply/logo.webp' },
+            { slug: 'learn-divide', label: 'Phép Chia', imageUrl: 'https://assets.cuthongminh.com/games/learn-divide/logo.webp' },
         ],
     },
     {
-        key: 'english',
+        slug: 'tieng-anh',
         label: 'Tiếng Anh',
-        emoji: '🇬🇧',
+        imageUrl: 'https://assets.cuthongminh.com/games/learn-english-vocab/tieng_anh.webp',
         gameId: 'music',
         top: '83%',
         left: '52%',
         subs: [
-            { key: 'eng-song', label: 'Nhịp điệu từ vựng', emoji: '🎤', gameId: 'music' },
-            { key: 'eng-word', label: 'Từ vựng nhanh', emoji: '📚', gameId: 'memory' },
-            { key: 'eng-spell', label: 'Đánh vần', emoji: '🔠', gameId: 'number' },
+            { slug: 'learn-english-vocab', label: 'Học Từ Vựng', imageUrl: 'https://assets.cuthongminh.com/games/learn-english-vocab/logo.webp' },
+            { slug: 'learn-english-alphabet', label: 'Bảng Chữ Cái', imageUrl: 'https://assets.cuthongminh.com/games/learn-english-alphabet/logo.webp' },
         ],
     },
 ]
 
+function getSubNodePosition(total: number, index: number) {
+    if (total <= 1) return { x: 0, y: 0 }
+    if (total === 2) {
+        return index === 0 ? { x: -124, y: 0 } : { x: 124, y: 0 }
+    }
+
+    const radiusByCount: Record<number, number> = {
+        3: 140,
+        4: 146,
+        5: 154,
+        6: 162,
+    }
+    const radius = radiusByCount[total] ?? 150
+    const angle = ((-90 + (index * 360) / total) * Math.PI) / 180
+    return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
+}
+
 export default function ChildGamesPage() {
+    const router = useRouter()
+    const searchParams = useSearchParams()
     const supabase = useMemo(() => createClient(), [])
     const audio = useAudioControls()
     const [stars, setStars] = useState(0)
     const [currentStreak, setCurrentStreak] = useState(0)
     const [bestStreak, setBestStreak] = useState(0)
     const [childId, setChildId] = useState<string | null>(null)
-    const [activeGame, setActiveGame] = useState<GameId>('number')
-    const [focusedNodeKey, setFocusedNodeKey] = useState<string | null>(null)
+    const [expandedNodeSlug, setExpandedNodeSlug] = useState<string | null>(null)
+    const standaloneView = searchParams.get('view') as GameId | null
+    const isStandalone = standaloneView !== null
 
     useEffect(() => {
         const saved = window.localStorage.getItem(STAR_KEY)
@@ -1287,114 +1548,119 @@ export default function ChildGamesPage() {
         }
     }, [addLocalStars, childId])
 
+    const effectiveGame = standaloneView ?? 'number'
+
     const activeGameContent = useMemo(() => {
-        if (activeGame === 'number') return <NumberChaseGame onReportPlay={reportPlay} audio={audio} />
-        if (activeGame === 'memory') return <MemoryFlipGame onReportPlay={reportPlay} audio={audio} />
-        if (activeGame === 'maze') return <MazeRunnerGame onReportPlay={reportPlay} audio={audio} />
-        if (activeGame === 'color') return <ColorMixGame onReportPlay={reportPlay} audio={audio} />
+        if (effectiveGame === 'number') return <NumberChaseGame onReportPlay={reportPlay} audio={audio} />
+        if (effectiveGame === 'memory') return <MemoryFlipGame onReportPlay={reportPlay} audio={audio} />
+        if (effectiveGame === 'maze') return <MazeRunnerGame onReportPlay={reportPlay} audio={audio} />
+        if (effectiveGame === 'color') return <ColorMixGame onReportPlay={reportPlay} audio={audio} />
         return <MusicPatternGame onReportPlay={reportPlay} audio={audio} />
-    }, [activeGame, audio, reportPlay])
+    }, [effectiveGame, audio, reportPlay])
 
     const selectedMeta = useMemo(() => {
-        return GAME_TABS.find((item) => item.id === activeGame) ?? GAME_TABS[0]
-    }, [activeGame])
+        return GAME_TABS.find((item) => item.id === effectiveGame) ?? GAME_TABS[0]
+    }, [effectiveGame])
 
     return (
-        <div className="min-h-screen bg-[#b7dbe4] py-6 px-3 sm:px-5">
+        <div className="min-h-screen bg-[#aed7df] py-3 px-1 sm:px-3">
             <div className="mx-auto max-w-[1400px] space-y-5">
-                <section className="rounded-[1.8rem] border-4 border-white/80 bg-[#ece5d5] px-5 py-3 shadow-[0_8px_0_rgba(255,255,255,0.45)]">
+                <section className="rounded-[2rem] border-4 border-white/80 bg-[#ece5d5] px-5 py-3 shadow-[0_8px_0_rgba(255,255,255,0.45)]">
                     <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
-                            <div className="text-5xl leading-none">🦉</div>
-                            <div>
-                                <p className="text-3xl font-black text-sky-700">Mindory Kids</p>
-                                <p className="text-xs font-bold text-sky-600">Kho trò chơi tương tác</p>
-                            </div>
+                            <Image src="https://assets.cuthongminh.com/assets/logo-long.webp" alt="Cú Thông Minh" width={260} height={56} className="h-12 w-auto sm:h-14" />
                         </div>
-                        <div className="rounded-full border-2 border-sky-200 bg-white px-4 py-2">
-                            <p className="text-sm font-black text-sky-700">⭐ {stars} • 🔥 {currentStreak} • 🏅 {bestStreak}</p>
+                        <div className="flex items-center gap-2 rounded-full border-2 border-sky-200 bg-white px-3 py-1.5">
+                            <Image src="https://assets.cuthongminh.com/assets/avatar-boy.webp" alt="Avatar" width={56} height={56} className="h-12 w-12 rounded-full border-2 border-sky-100" />
+                            <div className="pr-2">
+                                <p className="text-sm font-black text-slate-700">hi</p>
+                                <p className="text-sm font-black text-blue-500">Cấp độ 1</p>
+                                <p className="text-[11px] font-bold text-slate-500">⭐ {stars} • 🔥 {currentStreak} • 🏅 {bestStreak}</p>
+                            </div>
                         </div>
                     </div>
                 </section>
 
-                <section className="mx-auto w-full max-w-[980px] rounded-[2rem] border-4 border-white/80 bg-[#c9e7f2] p-3 shadow-xl">
-                    <div className="relative overflow-hidden rounded-[1.7rem] border-2 border-white/70 bg-gradient-to-b from-[#c7ecfb] via-[#dff6cc] to-[#c1e787] h-[600px] sm:h-[680px]">
-                        <div className="absolute left-8 top-8 h-8 w-24 rounded-full bg-white/70 blur-sm" />
-                        <div className="absolute right-12 top-16 h-10 w-28 rounded-full bg-white/70 blur-sm" />
-                        <div className="absolute left-1/3 top-10 text-7xl opacity-80">🌈</div>
-                        <div className="absolute right-14 top-8 text-5xl ctm-float">🎈</div>
-
-                        <svg viewBox="0 0 1000 680" className="absolute inset-0 h-full w-full opacity-45">
-                            <path d="M70 640 C140 560, 240 600, 320 540 C390 485, 475 520, 560 460 C650 398, 760 430, 860 370 C900 345, 930 330, 965 305" stroke="#d8c783" strokeWidth="22" fill="none" strokeLinecap="round" />
-                            <path d="M90 470 C170 430, 230 420, 320 430 C430 442, 500 420, 590 370 C690 315, 760 324, 900 282" stroke="#e8da9d" strokeWidth="22" fill="none" strokeLinecap="round" />
-                            <path d="M85 320 C175 285, 255 278, 340 302 C420 324, 535 290, 620 250 C700 213, 786 230, 905 220" stroke="#dcca84" strokeWidth="22" fill="none" strokeLinecap="round" />
-                        </svg>
-
+                {!isStandalone ? (
+                <section className="mx-auto w-full max-w-[1400px] rounded-[2rem] border-4 border-white/70 bg-[#b7dbe4] p-2 shadow-xl">
+                    <div
+                        className="relative h-[690px] overflow-hidden rounded-[1.6rem] border-2 border-white/70"
+                        onClick={() => setExpandedNodeSlug(null)}
+                    >
+                        <Image src="https://assets.cuthongminh.com/assets/bg-games-home.webp" alt="Bản đồ trò chơi" fill className="object-cover" />
                         {GAME_MAP_NODES.map((node) => {
-                            const isActive = activeGame === node.gameId
-                            const styleSet = GAME_NODE_STYLES[node.gameId]
-                            const isFocused = focusedNodeKey === node.key
-                            const hasFocusMode = Boolean(focusedNodeKey)
-                            const isGhosted = Boolean(hasFocusMode && !isFocused)
-
+                            const isExpanded = node.slug === expandedNodeSlug
+                            const hasExpandedNode = expandedNodeSlug !== null
+                            const isBlockedLargeNode = hasExpandedNode && !isExpanded
+                            const top = isExpanded ? '50%' : node.top
+                            const left = isExpanded ? '50%' : node.left
                             return (
                                 <div
-                                    key={node.key}
+                                    key={node.slug}
                                     className={cn(
-                                        'absolute -translate-x-1/2 -translate-y-1/2 relative flex items-center justify-center isolate transition-all duration-500 ease-out',
-                                        isGhosted && 'opacity-30 blur-[2px] grayscale-[30%] scale-95 pointer-events-none',
-                                        isFocused && 'z-50'
+                                        'absolute -translate-x-1/2 -translate-y-1/2 transition-all duration-500 ease-out',
+                                        isExpanded && 'z-30 scale-100',
+                                        !isExpanded && hasExpandedNode && 'z-10 opacity-35 grayscale-[45%] scale-95',
+                                        !isExpanded && !hasExpandedNode && 'z-20 opacity-100 grayscale-0 scale-100'
                                     )}
-                                    style={{ top: node.top, left: node.left }}
+                                    style={{ top, left }}
                                 >
                                     <button
                                         type="button"
-                                        onClick={() => {
-                                            setActiveGame(node.gameId)
-                                            setFocusedNodeKey((prev) => (prev === node.key ? null : node.key))
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            if (isBlockedLargeNode) return
+                                            if (isExpanded) {
+                                                setExpandedNodeSlug(null)
+                                                return
+                                            }
+                                            setExpandedNodeSlug(node.slug)
                                         }}
                                         className={cn(
-                                            'relative z-30 flex h-24 w-24 sm:h-32 sm:w-32 items-center justify-center rounded-full border-4 bg-white drop-shadow-xl transition-all duration-300',
-                                            styleSet.ring,
-                                            isFocused ? 'scale-110 ring-4 ring-orange-300 ring-offset-2' : 'hover:scale-[1.05]',
-                                            isActive && !isFocused && 'ring-4 ring-yellow-200'
+                                            'relative transition-transform',
+                                            !isBlockedLargeNode && 'hover:scale-105',
+                                            isBlockedLargeNode && 'cursor-default'
                                         )}
                                     >
-                                        <div className="text-5xl sm:text-6xl">{node.emoji}</div>
-                                        <div className={cn('absolute -bottom-1 left-1/2 min-w-[86px] -translate-x-1/2 rounded-full bg-gradient-to-r px-3 py-1 text-center text-[11px] font-black text-white shadow-md', styleSet.ribbon)}>
-                                            {node.label}
+                                        <div className={cn(
+                                            'relative h-28 w-28 rounded-full border-[5px] border-orange-500 bg-white shadow-xl transition-all duration-300 sm:h-36 sm:w-36',
+                                            isExpanded && 'scale-110 ring-4 ring-orange-300 ring-offset-2'
+                                        )}>
+                                            <Image src={node.imageUrl} alt={node.label} fill className="rounded-full object-contain p-2" />
                                         </div>
                                     </button>
 
-                                    <div className={cn('absolute inset-0 m-auto h-full w-full pointer-events-none z-20 transition-opacity duration-500', isFocused ? 'opacity-100' : 'opacity-0')}>
+                                    <div className={cn('pointer-events-none absolute inset-0 m-auto h-full w-full transition-opacity duration-500 ease-out', isExpanded ? 'opacity-100' : 'opacity-0')}>
                                         {node.subs.map((sub, index) => {
-                                            const ring = GAME_NODE_STYLES[sub.gameId].ring
-                                            const ribbon = GAME_NODE_STYLES[sub.gameId].ribbon
-                                            const angle = ((-90 + (index * 360) / node.subs.length) * Math.PI) / 180
-                                            const radius = 130
-                                            const x = Math.cos(angle) * radius
-                                            const y = Math.sin(angle) * radius
-                                            const hiddenScale = 0.2
-
+                                            const total = node.subs.length
+                                            const { x, y } = getSubNodePosition(total, index)
                                             return (
-                                                <button
-                                                    key={sub.key}
-                                                    type="button"
-                                                    onClick={() => setActiveGame(sub.gameId)}
-                                                    className="absolute inset-0 m-auto h-16 w-16 sm:h-20 sm:w-20 transition-all duration-500 ease-out"
+                                                <div
+                                                    key={sub.slug}
+                                                    className="absolute inset-0 m-auto h-16 w-16 transition-all duration-500 ease-out sm:h-20 sm:w-20"
                                                     style={{
-                                                        transform: `translate(${isFocused ? x : 0}px, ${isFocused ? y : 0}px) scale(${isFocused ? 1 : hiddenScale})`,
-                                                        transitionDelay: `${isFocused ? 70 + index * 55 : 0}ms`,
-                                                        pointerEvents: isFocused ? 'auto' : 'none',
+                                                        transform: `translate(${x}px, ${y}px) scale(${isExpanded ? 1 : 0.2})`,
+                                                        opacity: isExpanded ? 1 : 0,
+                                                        pointerEvents: isExpanded ? 'auto' : 'none',
+                                                        transitionDelay: `${isExpanded ? index * 60 : 0}ms`,
                                                     }}
                                                 >
-                                                    <div className={cn('relative h-full w-full rounded-full border-2 bg-white shadow-xl flex items-center justify-center transition-transform hover:scale-110', ring)}>
-                                                        <span className="text-2xl sm:text-3xl">{sub.emoji}</span>
-                                                    </div>
-                                                    <div className={cn('absolute -bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-gradient-to-r px-3 py-1 text-xs font-bold text-white shadow-md', ribbon)}>
-                                                        {sub.label}
-                                                    </div>
-                                                </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation()
+                                                            router.push(`/child/games/${sub.slug}`)
+                                                        }}
+                                                        className="group/game block h-full w-full"
+                                                    >
+                                                        <div className="relative flex h-full w-full items-center justify-center rounded-full border-2 border-orange-300 bg-white shadow-xl transition-transform hover:scale-110">
+                                                            <Image src={sub.imageUrl} alt={sub.label} fill className="object-contain p-1 drop-shadow-sm" />
+                                                        </div>
+                                                        <div className="pointer-events-none absolute -bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-blue-600/80 px-3 py-1 text-xs font-bold text-white shadow-md transition-opacity">
+                                                            {sub.label}
+                                                        </div>
+                                                    </button>
+                                                </div>
                                             )
                                         })}
                                     </div>
@@ -1403,31 +1669,32 @@ export default function ChildGamesPage() {
                         })}
                     </div>
                 </section>
+                ) : null}
 
-                <div className="flex justify-center">
-                    <button
-                        type="button"
-                        onClick={audio.toggleMusic}
-                        className={cn(
-                            'rounded-2xl px-5 py-2 text-sm font-black shadow-lg transition',
-                            audio.musicOn ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-white hover:bg-slate-800'
-                        )}
-                    >
-                        {audio.musicOn ? '🔊 Đang bật nhạc' : '🔈 Bật nhạc nền'}
-                    </button>
-                </div>
-
+                {isStandalone ? (
                 <section className="rounded-[1.6rem] border-2 border-white/80 bg-white/90 p-4 shadow-xl">
+                    {isStandalone ? (
+                        <div className="mb-3">
+                            <button
+                                type="button"
+                                onClick={() => router.push('/child/games')}
+                                className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black text-sky-700 hover:bg-sky-200"
+                            >
+                                ← Quay lại bản đồ trò chơi
+                            </button>
+                        </div>
+                    ) : null}
                     <div className="mb-3 flex flex-wrap items-center gap-2">
                         <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black text-sky-700">
                             {selectedMeta.emoji} {selectedMeta.title}
                         </span>
                         <span className="text-xs font-bold text-slate-500">{selectedMeta.desc}</span>
                     </div>
-                    <div key={activeGame} className="ctm-fade-up">
+                    <div key={effectiveGame} className="ctm-fade-up">
                         {activeGameContent}
                     </div>
                 </section>
+                ) : null}
             </div>
         </div>
     )
