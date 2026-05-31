@@ -3,6 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 
 type GameCategory = {
   title: string
@@ -217,6 +218,25 @@ export default function HomePage() {
   const [owlDragging, setOwlDragging] = useState(false)
   const dragOffsetRef = useRef({ x: 0, y: 0 })
   const owlSizeRef = useRef(110)
+  const [authUrl, setAuthUrl] = useState('/register')
+
+  useEffect(() => {
+    async function checkUser() {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const role = user.user_metadata?.role || user.app_metadata?.role
+        if (role === 'child') {
+          setAuthUrl('/child')
+        } else if (role === 'admin') {
+          setAuthUrl('/admin')
+        } else {
+          setAuthUrl('/parent')
+        }
+      }
+    }
+    checkUser()
+  }, [])
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -289,7 +309,7 @@ export default function HomePage() {
             />
           </Link>
           <Link
-            href="/register"
+            href={authUrl}
             className="rounded-full bg-[#FF9C01] px-6 py-3 font-bold text-slate-900 shadow-[0_4px_14px_0_rgba(255,156,1,0.39)] transition-all hover:-translate-y-0.5 hover:bg-orange-500"
           >
             Bắt đầu học
@@ -320,7 +340,7 @@ export default function HomePage() {
             </p>
             <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Link
-                href="/register"
+                href={authUrl}
                 className="flex w-full items-center justify-center gap-3 rounded-full bg-[#FF9C01] px-8 py-4 text-lg font-bold text-slate-900 shadow-[0_8px_30px_rgb(255,156,1,0.3)] transition-all hover:-translate-y-1 hover:bg-orange-500 sm:w-auto"
               >
                 Trải nghiệm ngay <span>→</span>
@@ -581,7 +601,7 @@ export default function HomePage() {
               Tham gia cộng đồng phụ huynh tin dùng Cú Thông Minh để mang đến tương lai tươi sáng cho con bạn.
             </p>
             <Link
-              href="/register"
+              href={authUrl}
               className="inline-flex w-full items-center justify-center rounded-full bg-white px-10 py-5 text-lg font-bold text-slate-900 shadow-xl transition-all hover:scale-105 sm:w-auto md:text-xl"
             >
               Đăng ký tài khoản miễn phí
@@ -674,7 +694,7 @@ export default function HomePage() {
 
       <div className="fixed bottom-0 left-0 right-0 z-[80] border-t border-slate-200 bg-white/90 p-3 pb-[max(env(safe-area-inset-bottom),12px)] shadow-[0_-4px_12px_rgba(0,0,0,0.08)] backdrop-blur md:hidden">
         <Link
-          href="/register"
+          href={authUrl}
           className="flex w-full items-center justify-center gap-2 rounded-full bg-[#FF9C01] py-3.5 text-base font-bold text-slate-900 shadow-[0_4px_14px_0_rgba(255,156,1,0.39)] transition-all active:scale-[0.98]"
         >
           Trải nghiệm ngay <span>→</span>

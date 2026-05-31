@@ -26,7 +26,10 @@ export default function ChildrenPage() {
     useEffect(() => {
         async function fetchChildren() {
             const { data: { user } } = await supabase.auth.getUser()
-            if (!user) return
+            if (!user) {
+                setLoading(false)
+                return
+            }
 
             const { data, error } = await supabase
                 .from('profiles')
@@ -38,7 +41,7 @@ export default function ChildrenPage() {
         }
 
         fetchChildren()
-    }, [supabase])
+    }, [])
 
     // Mock data để demo - sau này nối API thật
     const enrichedChildren = children.map((child, idx) => ({
