@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mindory",
-  description: "Mindory Parent Dashboard",
+  title: "Cú Thông Minh — Trò Chơi Giáo Dục Cho Bé 3-8 Tuổi",
+  description:
+    "Nền tảng học mà chơi cho trẻ mầm non với trò chơi toán học, ngôn ngữ, tư duy và kỹ năng sống.",
 };
 
 export default function RootLayout({

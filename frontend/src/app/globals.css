@@ -110,3 +110,28 @@ body {
   background: linear-gradient(110deg, transparent, rgba(255, 255, 255, 0.45), transparent);
   animation: ctm-shimmer 2.8s linear infinite;
 }
+
+@keyframes ctm-blob {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(24px, -16px) scale(1.08);
+  }
+  66% {
+    transform: translate(-16px, 12px) scale(0.94);
+  }
+}
+
+.animate-blob {
+  animation: ctm-blob 9s infinite ease-in-out;
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
+}
