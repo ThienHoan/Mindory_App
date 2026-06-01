@@ -7,6 +7,7 @@ import {
     CheckCircleIcon,
     MagnifyingGlassIcon,
     UserIcon,
+    SparklesIcon,
 } from '@heroicons/react/24/outline'
 import { createClient } from '@/lib/supabase/client'
 import { api } from '@/lib/api-client'
@@ -208,6 +209,14 @@ function AssignTaskContent() {
         setIsSuccess(false)
     }
 
+    const handleCreateAITask = () => {
+        if (selectedChildren.length === 0) {
+            alert('Vui lòng chọn ít nhất một bé để tạo bài bằng AI.')
+            return
+        }
+        router.push(`/parent/pdf-quiz/upload?childId=${selectedChildren[0]}`)
+    }
+
     if (loadingData) {
         return (
             <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-600">
@@ -248,6 +257,14 @@ function AssignTaskContent() {
                             className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
                         >
                             Quay lại
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleCreateAITask}
+                            className="flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100"
+                        >
+                            <SparklesIcon className="h-4 w-4" />
+                            Tạo bằng AI
                         </button>
                         <button
                             type="button"

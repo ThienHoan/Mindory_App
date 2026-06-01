@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import {
     AcademicCapIcon,
@@ -35,6 +36,7 @@ const tasks = [
 
 export default function ParentDashboardPage() {
     const supabase = createClient()
+    const router = useRouter()
 
     const [selectedChild, setSelectedChild] = useState('')
     const [children, setChildren] = useState<ChildProfile[]>([])
@@ -121,6 +123,14 @@ export default function ParentDashboardPage() {
         },
     ]
 
+    const handleCreateAITask = () => {
+        if (!selectedChild) {
+            alert('Vui lòng chọn bé trước khi tạo bài tập bằng AI.')
+            return
+        }
+        router.push(`/parent/pdf-quiz?childId=${selectedChild}`)
+    }
+
     if (loading) {
         return (
             <div className="flex items-center justify-center p-12">
@@ -139,12 +149,21 @@ export default function ParentDashboardPage() {
                     <h2 className="text-3xl font-black tracking-tight text-gray-900">Parent Dashboard</h2>
                     <p className="mt-1 text-sm text-slate-500">Đang xem dữ liệu của: {selectedChildName}</p>
                 </div>
-                <Link
-                    href="/parent/assign"
-                    className="rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-xl shadow-indigo-100 transition-all active:scale-95 hover:bg-indigo-700"
-                >
-                    Giao Bài Mới +
-                </Link>
+                <div className="flex gap-2">
+                    <button
+                        onClick={handleCreateAITask}
+                        className="rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-xl shadow-indigo-100 transition-all active:scale-95 hover:from-blue-700 hover:to-indigo-700 flex items-center gap-2"
+                    >
+                        <SparklesIcon className="h-5 w-5" />
+                        Tạo Bài Bằng AI
+                    </button>
+                    <Link
+                        href="/parent/assign"
+                        className="rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-xl shadow-indigo-100 transition-all active:scale-95 hover:bg-indigo-700"
+                    >
+                        Giao Bài Mới +
+                    </Link>
+                </div>
             </div>
 
             <section className="rounded-3xl border border-blue-100 bg-gradient-to-b from-blue-50 to-indigo-50 p-4 sm:p-6">

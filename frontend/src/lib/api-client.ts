@@ -1,4 +1,4 @@
-import { createClient } from './supabase/client'
+﻿import { createClient } from './supabase/client'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
 const inflightRequests = new Map<string, Promise<unknown>>()
@@ -291,5 +291,79 @@ export const api = {
             const raw = await requestJson<unknown>(`/mini-games/stats?parentId=${encodeURIComponent(parentId)}`, undefined, { cacheMs: 5000 })
             return normalizeObjectResponse<MiniGameParentStats>(raw)
         },
+    },
+    aiQuizzes: {
+        upload: async (title: string, fileUrl: string): Promise<{ documentId: string }> => {
+            const raw = await requestJson<unknown>('/ai-quiz/upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, fileUrl }),
+            })
+            return normalizeObjectResponse<{ documentId: string }>(raw)
+        },
+        listDocuments: async (): Promise<any[]> => {
+            const raw = await requestJson<unknown>('/ai-quiz/documents')
+            if (Array.isArray(raw)) return raw
+            return (raw as any)?.data || []
+        },
+        getDocument: async (id: string): Promise<any> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/documents/${id}`)
+            return normalizeObjectResponse<any>(raw)
+        },
+        listQuestions: async (documentId: string): Promise<any[]> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/documents/${documentId}/questions`)
+            if (Array.isArray(raw)) return raw
+            return (raw as any)?.data || []
+        },
+        createQuestion: async (documentId: string, payload: {
+            question: string
+            options: string[]
+            correctIndex: number
+            status?: 'pending' | 'approved' | 'rejected'
+        }): Promise<any> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/documents/${documentId}/questions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+            return normalizeObjectResponse<any>(raw)
+        },
+        updateQuestion: async (questionId: string, payload: {
+            question: string
+            options: string[]
+            correctIndex: number
+            status?: 'pending' | 'approved' | 'rejected'
+        }): Promise<any> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/questions/${questionId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+            return normalizeObjectResponse<any>(raw)
+        },
+        deleteQuestion: async (questionId: string): Promise<{ success: boolean }> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/questions/${questionId}`, {
+                method: 'DELETE',
+            })
+            return normalizeObjectResponse<{ success: boolean }>(raw)
+        },
+        getPlayable: async (documentId: string): Promise<{ document: any; questions: any[] }> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/documents/${documentId}/playable`)
+            const data = normalizeObjectResponse<{ document: any; questions: any[] }>(raw)
+            return {
+                document: data?.document ?? null,
+                questions: Array.isArray(data?.questions) ? data.questions : []
+            }
+        },
+        updateQuestionStatus: async (id: string, status: 'approved' | 'rejected' | 'pending'): Promise<any> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/questions/${id}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status }),
+            })
+            return normalizeObjectResponse<any>(raw)
+        }
     }
 }
+
+
