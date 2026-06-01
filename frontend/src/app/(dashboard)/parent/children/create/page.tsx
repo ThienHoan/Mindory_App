@@ -8,6 +8,7 @@ export default function CreateChildPage() {
     const [fullName, setFullName] = useState('')
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
+    const [grade, setGrade] = useState(1)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
@@ -42,7 +43,8 @@ export default function CreateChildPage() {
                     email,
                     password,
                     fullName,
-                    parentId: parentUser.id
+                    parentId: parentUser.id,
+                    grade,
                 })
             })
 
@@ -125,6 +127,26 @@ export default function CreateChildPage() {
                             />
                         </div>
                     </div>
+
+                    <div className="sm:col-span-2">
+                        <label htmlFor="grade" className="block text-sm font-medium leading-6 text-gray-900">
+                            Lớp
+                        </label>
+                        <div className="mt-2">
+                            <select
+                                id="grade"
+                                name="grade"
+                                value={grade}
+                                onChange={(e) => setGrade(Number(e.target.value))}
+                                className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-inset ring-indigo-600 sm:text-sm sm:leading-6 px-3"
+                            >
+                                {[1, 2, 3, 4, 5].map((value) => (
+                                    <option key={value} value={value}>Lớp {value}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
                 </div>
 
                 {error && (

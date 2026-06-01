@@ -209,8 +209,17 @@ const MATH_LEVELS: MathLevel[] = [
     },
 ]
 
-function NumberChaseGame({ onReportPlay, audio }: { onReportPlay: (payload: PlayReportPayload) => void; audio: AudioControls }) {
-    const [levelIndex, setLevelIndex] = useState(0)
+function NumberChaseGame({
+    onReportPlay,
+    audio,
+    startLevel = 0,
+}: {
+    onReportPlay: (payload: PlayReportPayload) => void
+    audio: AudioControls
+    startLevel?: number
+}) {
+    const safeStartLevel = Math.min(Math.max(0, startLevel), MATH_LEVELS.length - 1)
+    const [levelIndex, setLevelIndex] = useState(safeStartLevel)
     const [questionIndex, setQuestionIndex] = useState(0)
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
     const [correctCount, setCorrectCount] = useState(0)
@@ -488,11 +497,20 @@ function createShuffledMemoryCards(pairCount: number) {
     return shuffleArray(createMemoryCards(pairCount))
 }
 
-function MemoryFlipGame({ onReportPlay, audio }: { onReportPlay: (payload: PlayReportPayload) => void; audio: AudioControls }) {
-    const [levelIndex, setLevelIndex] = useState(0)
-    const [bestLevel, setBestLevel] = useState(0)
+function MemoryFlipGame({
+    onReportPlay,
+    audio,
+    startLevel = 0,
+}: {
+    onReportPlay: (payload: PlayReportPayload) => void
+    audio: AudioControls
+    startLevel?: number
+}) {
+    const safeStartLevel = Math.min(Math.max(0, startLevel), MEMORY_LEVELS.length - 1)
+    const [levelIndex, setLevelIndex] = useState(safeStartLevel)
+    const [bestLevel, setBestLevel] = useState(safeStartLevel)
     const [speechOn, setSpeechOn] = useState(true)
-    const [cards, setCards] = useState<MemoryCard[]>(() => createMemoryCards(MEMORY_LEVELS[0].pairs))
+    const [cards, setCards] = useState<MemoryCard[]>(() => createMemoryCards(MEMORY_LEVELS[safeStartLevel].pairs))
     const [openIndexes, setOpenIndexes] = useState<number[]>([])
     const [moves, setMoves] = useState(0)
     const [locked, setLocked] = useState(false)
@@ -693,13 +711,24 @@ const MUSIC_PADS = [
     { color: 'bg-violet-500 hover:bg-violet-600', active: 'ring-4 ring-violet-200', freq: 523.25, label: 'Đố' },
 ]
 
-function MusicPatternGame({ onReportPlay, audio }: { onReportPlay: (payload: PlayReportPayload) => void; audio: AudioControls }) {
-    const [sequence, setSequence] = useState<number[]>([0])
+function MusicPatternGame({
+    onReportPlay,
+    audio,
+    startLevel = 1,
+}: {
+    onReportPlay: (payload: PlayReportPayload) => void
+    audio: AudioControls
+    startLevel?: number
+}) {
+    const safeStartLevel = Math.max(1, startLevel)
+    const [sequence, setSequence] = useState<number[]>(() =>
+        Array.from({ length: safeStartLevel }, () => Math.floor(Math.random() * MUSIC_PADS.length))
+    )
     const [userIndex, setUserIndex] = useState(0)
     const [activePad, setActivePad] = useState<number | null>(null)
     const [isPlaying, setIsPlaying] = useState(false)
-    const [level, setLevel] = useState(1)
-    const [best, setBest] = useState(1)
+    const [level, setLevel] = useState(safeStartLevel)
+    const [best, setBest] = useState(safeStartLevel)
 
     const playPad = useCallback(
         (padIndex: number, duration = 220) => {
@@ -901,10 +930,19 @@ function findHintDirection(maze: MazeCellWalls[][], start: MazePos, goal: MazePo
     return null
 }
 
-function MazeRunnerGame({ onReportPlay, audio }: { onReportPlay: (payload: PlayReportPayload) => void; audio: AudioControls }) {
+function MazeRunnerGame({
+    onReportPlay,
+    audio,
+    startLevel = 0,
+}: {
+    onReportPlay: (payload: PlayReportPayload) => void
+    audio: AudioControls
+    startLevel?: number
+}) {
+    const safeStartLevel = Math.min(Math.max(0, startLevel), MAZE_LEVELS.length - 1)
     const [mazeSeed, setMazeSeed] = useState(20260527)
-    const [levelIndex, setLevelIndex] = useState(0)
-    const [bestLevel, setBestLevel] = useState(0)
+    const [levelIndex, setLevelIndex] = useState(safeStartLevel)
+    const [bestLevel, setBestLevel] = useState(safeStartLevel)
     const [pos, setPos] = useState<MazePos>({ x: 0, y: 0 })
     const [steps, setSteps] = useState(0)
     const [invalidMoves, setInvalidMoves] = useState(0)
@@ -1501,8 +1539,49 @@ export default function ChildGamesPage() {
     const [bestStreak, setBestStreak] = useState(0)
     const [childId, setChildId] = useState<string | null>(null)
     const [expandedNodeSlug, setExpandedNodeSlug] = useState<string | null>(null)
-    const standaloneView = searchParams.get('view') as GameId | null
-    const isStandalone = standaloneView !== null
+    const viewParam = searchParams.get('view')
+    const embedMode = searchParams.get('embed') === '1'
+    const returnTo = searchParams.get('returnTo')
+    const autoReturn = searchParams.get('autoReturn') === '1'
+    const randomLevel = searchParams.get('randomLevel') === '1'
+    const [randomSeed] = useState(() => Number(searchParams.get('seed')) || Date.now())
+    const randomConfig = useMemo(() => {
+        const rand = createSeededRandom(randomSeed)
+        return {
+            gameId: GAME_TABS[Math.floor(rand() * GAME_TABS.length)].id,
+            numberLevel: Math.floor(rand() * MATH_LEVELS.length),
+            memoryLevel: Math.floor(rand() * MEMORY_LEVELS.length),
+            mazeLevel: Math.floor(rand() * MAZE_LEVELS.length),
+            musicLevel: Math.max(1, Math.floor(rand() * 4) + 1),
+        }
+    }, [randomSeed])
+
+    const isRandom = viewParam === 'random'
+    const standaloneView = !isRandom && viewParam ? (viewParam as GameId) : null
+    const isStandalone = standaloneView !== null || isRandom
+
+    useEffect(() => {
+        if (!embedMode || typeof document === 'undefined') return
+
+        document.documentElement.style.colorScheme = 'light'
+        document.documentElement.style.background = '#ffffff'
+        document.body.style.background = '#ffffff'
+
+        const styleId = 'mindory-hide-next-indicator'
+        let styleEl = document.getElementById(styleId) as HTMLStyleElement | null
+        if (!styleEl) {
+            styleEl = document.createElement('style')
+            styleEl.id = styleId
+            styleEl.textContent = 'nextjs-portal{display:none!important;}'
+            document.head.appendChild(styleEl)
+        }
+
+        return () => {
+            document.documentElement.style.colorScheme = ''
+            document.documentElement.style.background = ''
+            document.body.style.background = ''
+        }
+    }, [embedMode])
 
     useEffect(() => {
         const saved = window.localStorage.getItem(STAR_KEY)
@@ -1525,42 +1604,70 @@ export default function ChildGamesPage() {
         })
     }, [])
 
+    const hasReturnedRef = useRef(false)
     const reportPlay = useCallback(async (payload: PlayReportPayload) => {
         if (!childId) {
             addLocalStars(payload.starsEarned)
-            return
+        } else {
+            try {
+                const result = await api.miniGames.play({
+                    childId,
+                    gameId: payload.gameId,
+                    score: payload.score,
+                    accuracy: payload.accuracy,
+                    durationSeconds: payload.durationSeconds,
+                    starsEarned: payload.starsEarned,
+                })
+                setStars(result.totalStars)
+                setCurrentStreak(result.currentStreak)
+                setBestStreak(result.bestStreak)
+                window.localStorage.setItem(STAR_KEY, String(result.totalStars))
+            } catch {
+                addLocalStars(payload.starsEarned)
+            }
         }
-        try {
-            const result = await api.miniGames.play({
-                childId,
-                gameId: payload.gameId,
-                score: payload.score,
-                accuracy: payload.accuracy,
-                durationSeconds: payload.durationSeconds,
-                starsEarned: payload.starsEarned,
-            })
-            setStars(result.totalStars)
-            setCurrentStreak(result.currentStreak)
-            setBestStreak(result.bestStreak)
-            window.localStorage.setItem(STAR_KEY, String(result.totalStars))
-        } catch {
-            addLocalStars(payload.starsEarned)
-        }
-    }, [addLocalStars, childId])
 
-    const effectiveGame = standaloneView ?? 'number'
+        if (embedMode && typeof window !== 'undefined' && window.parent) {
+            window.parent.postMessage({ type: 'mindory:game-complete' }, '*')
+        }
+
+        if (autoReturn && returnTo && !hasReturnedRef.current) {
+            hasReturnedRef.current = true
+            window.setTimeout(() => {
+                router.push(returnTo)
+            }, 600)
+        }
+    }, [addLocalStars, autoReturn, childId, embedMode, returnTo, router])
+
+    const effectiveGame = isRandom ? randomConfig.gameId : standaloneView ?? 'number'
 
     const activeGameContent = useMemo(() => {
-        if (effectiveGame === 'number') return <NumberChaseGame onReportPlay={reportPlay} audio={audio} />
-        if (effectiveGame === 'memory') return <MemoryFlipGame onReportPlay={reportPlay} audio={audio} />
-        if (effectiveGame === 'maze') return <MazeRunnerGame onReportPlay={reportPlay} audio={audio} />
+        const useRandom = isRandom || randomLevel
+        const numberStart = useRandom ? randomConfig.numberLevel : 0
+        const memoryStart = useRandom ? randomConfig.memoryLevel : 0
+        const mazeStart = useRandom ? randomConfig.mazeLevel : 0
+        const musicStart = useRandom ? randomConfig.musicLevel : 1
+
+        if (effectiveGame === 'number') return <NumberChaseGame onReportPlay={reportPlay} audio={audio} startLevel={numberStart} />
+        if (effectiveGame === 'memory') return <MemoryFlipGame onReportPlay={reportPlay} audio={audio} startLevel={memoryStart} />
+        if (effectiveGame === 'maze') return <MazeRunnerGame onReportPlay={reportPlay} audio={audio} startLevel={mazeStart} />
         if (effectiveGame === 'color') return <ColorMixGame onReportPlay={reportPlay} audio={audio} />
-        return <MusicPatternGame onReportPlay={reportPlay} audio={audio} />
-    }, [effectiveGame, audio, reportPlay])
+        return <MusicPatternGame onReportPlay={reportPlay} audio={audio} startLevel={musicStart} />
+    }, [audio, effectiveGame, isRandom, randomConfig, randomLevel, reportPlay])
 
     const selectedMeta = useMemo(() => {
         return GAME_TABS.find((item) => item.id === effectiveGame) ?? GAME_TABS[0]
     }, [effectiveGame])
+
+    if (embedMode) {
+        return (
+            <div className="h-full w-full overflow-hidden bg-white">
+                <div key={effectiveGame} className="ctm-fade-up">
+                    {activeGameContent}
+                </div>
+            </div>
+        )
+    }
 
     return (
         <div className="min-h-screen bg-[#aed7df] py-3 px-1 sm:px-3">

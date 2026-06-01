@@ -11,6 +11,7 @@ interface Profile {
     full_name: string | null
     email: string | null
     role: 'parent' | 'child'
+    grade: number | null
 }
 
 type FilterType = 'all' | 'learning' | 'need-reminder' | 'completed'
@@ -46,7 +47,6 @@ export default function ChildrenPage() {
     // Mock data để demo - sau này nối API thật
     const enrichedChildren = children.map((child, idx) => ({
         ...child,
-        grade: 3 + (idx % 3),
         points: Math.floor(Math.random() * 2000) + 500,
         streak: Math.floor(Math.random() * 15),
         rank: `#${idx + 1}`,
@@ -170,7 +170,7 @@ export default function ChildrenPage() {
                             id={child.id}
                             name={child.full_name || 'Chưa đặt tên'}
                             email={child.email || ''}
-                            grade={child.grade}
+                            grade={child.grade ?? 1}
                             points={child.points}
                             streak={child.streak}
                             rank={child.rank}

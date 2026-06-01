@@ -28,7 +28,13 @@ export async function POST(request: Request) {
 
     // 2. Parse Body
     const body = await request.json()
-    const { email, password, fullName, parentId } = body
+    const { email, password, fullName, parentId, grade } = body
+    const normalizedGrade = grade !== undefined ? Number(grade) : null
+
+    if (normalizedGrade !== null && (!Number.isInteger(normalizedGrade) || normalizedGrade < 1 || normalizedGrade > 5)) {
+        return NextResponse.json({ error: 'Grade must be an integer between 1 and 5' }, { status: 400 })
+    }
+
 
     if (parentId !== parentUser.id) {
         return NextResponse.json({ error: 'Mismatched Parent ID' }, { status: 403 })
@@ -42,7 +48,8 @@ export async function POST(request: Request) {
         user_metadata: {
             full_name: fullName,
             role: 'child',
-            parent_id: parentId // Store link in metadata as backup
+            parent_id: parentId,
+            grade: normalizedGrade,
         }
     })
 
@@ -64,6 +71,7 @@ export async function POST(request: Request) {
                 full_name: fullName,
                 role: 'child',
                 parent_id: parentId,
+                grade: normalizedGrade,
             },
             { onConflict: 'id' }
         )

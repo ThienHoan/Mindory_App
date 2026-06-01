@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
@@ -82,6 +82,7 @@ const navigation = [
 
 export default function ChildLayout({ children }: { children: React.ReactNode }) {
     const pathname = usePathname()
+    const searchParams = useSearchParams()
     const router = useRouter()
     const supabase = createClient()
     const [profile, setProfile] = useState<ChildProfile | null>(null)
@@ -92,8 +93,10 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
     const [breakAnswer, setBreakAnswer] = useState('')
     const [breakError, setBreakError] = useState('')
     const isMiniPianoRoute = pathname?.startsWith('/child/games/mini-piano')
+    const isEmbeddedGameView = pathname?.startsWith('/child/games') && searchParams.get('embed') === '1'
 
     useEffect(() => {
+        if (isEmbeddedGameView) return
         async function getProfile() {
             const { data: { user } } = await supabase.auth.getUser()
             if (user) {
@@ -103,9 +106,10 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
             }
         }
         getProfile()
-    }, [supabase])
+    }, [isEmbeddedGameView, supabase])
 
     useEffect(() => {
+        if (isEmbeddedGameView) return
         if (breakPopupOpen) return
         const timer = window.setTimeout(() => {
             const nextQuestion = createBreakMathQuestion()
@@ -115,7 +119,7 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
             setBreakPopupOpen(true)
         }, BREAK_INTERVAL_MINUTES * 60 * 1000)
         return () => window.clearTimeout(timer)
-    }, [breakPopupOpen, breakRound, pathname])
+    }, [breakPopupOpen, breakRound, isEmbeddedGameView, pathname])
 
     const handleSignOut = async () => {
         await supabase.auth.signOut()
@@ -137,6 +141,10 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
         }
 
         setBreakError('Đáp án chưa đúng, bé thử hỏi ba mẹ và nhập lại nhé!')
+    }
+
+    if (isEmbeddedGameView) {
+        return <>{children}</>
     }
 
     return (

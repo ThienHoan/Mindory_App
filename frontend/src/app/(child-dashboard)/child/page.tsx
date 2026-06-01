@@ -12,8 +12,19 @@ interface ChildProfile {
     grade: number | null
 }
 
+const CORE_SUBJECT_KEYS = ['toan', 'tieng viet', 'tieng anh']
+
+function normalizeSubjectName(name: string) {
+    return name.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim()
+}
+
+function isCoreSubject(name: string) {
+    const normalized = normalizeSubjectName(name)
+    return CORE_SUBJECT_KEYS.some((key) => normalized.includes(key))
+}
+
 const subjectConfig: Record<string, { icon: string; color: string; bg: string; btnColor: string; btnText: string }> = {
-    'Toán Học': {
+    'Toán': {
         icon: '🔢',
         color: 'text-purple-600',
         bg: 'bg-purple-50',
@@ -26,13 +37,6 @@ const subjectConfig: Record<string, { icon: string; color: string; bg: string; b
         bg: 'bg-pink-50',
         btnColor: 'bg-pink-100 text-pink-600 hover:bg-pink-200',
         btnText: 'Học tiếp thôi!',
-    },
-    'Khoa Học': {
-        icon: '🔬',
-        color: 'text-green-600',
-        bg: 'bg-green-50',
-        btnColor: 'bg-green-100 text-green-600 hover:bg-green-200',
-        btnText: 'Bắt đầu ngay',
     },
     'Tiếng Anh': {
         icon: '🌍',
@@ -54,9 +58,8 @@ function getSubjectConfig(name: string) {
 }
 
 const subjectDesc: Record<string, string> = {
-    'Toán Học': 'Cùng khám phá thế giới của các con số và hình khối nhé!',
+    'Toán': 'Cùng khám phá thế giới của các con số và hình khối nhé!',
     'Tiếng Việt': 'Học cách kể những câu chuyện hay và viết chữ đẹp nào.',
-    'Khoa Học': 'Khám phá thiên nhiên và những thí nghiệm kỳ thú.',
     'Tiếng Anh': 'Luyện giao tiếp và học từ mới thật vui mỗi ngày.',
 }
 
@@ -72,6 +75,7 @@ export default function ChildHomePage() {
     const [subjects, setSubjects] = useState<Subject[]>([])
     const [tasks, setTasks] = useState<Task[]>([])
     const [loading, setLoading] = useState(true)
+    const [missingGrade, setMissingGrade] = useState(false)
 
     useEffect(() => {
         async function loadData() {
@@ -88,7 +92,12 @@ export default function ChildHomePage() {
                 if (profileData) {
                     setProfile(profileData)
 
-                    const grade = profileData.grade || 4
+                    if (profileData.grade === null || profileData.grade === undefined) {
+                        setMissingGrade(true)
+                        return
+                    }
+
+                    const grade = profileData.grade
 
                     const [subjectsRes, tasksRes] = await Promise.allSettled([
                         api.subjects.listByGrade(grade),
@@ -96,7 +105,7 @@ export default function ChildHomePage() {
                     ])
 
                     if (subjectsRes.status === 'fulfilled') {
-                        setSubjects(subjectsRes.value.data)
+                        setSubjects(subjectsRes.value.data.filter((subject) => isCoreSubject(subject.name)))
                     }
                     if (tasksRes.status === 'fulfilled') {
                         setTasks(tasksRes.value.data)
@@ -122,8 +131,18 @@ export default function ChildHomePage() {
         )
     }
 
+    if (missingGrade) {
+        return (
+            <div className="min-h-full flex flex-col items-center justify-center gap-4 p-8 text-center">
+                <span className="text-5xl">🧩</span>
+                <p className="text-gray-600 font-bold">Bé chưa được gán lớp.</p>
+                <p className="text-sm text-gray-500">Phụ huynh cần chọn lớp khi tạo hồ sơ hoặc cập nhật trong phần quản lý.</p>
+            </div>
+        )
+    }
+
     const xp = profile?.xp || 0
-    const grade = profile?.grade || 4
+    const grade = profile?.grade ?? 1
     const completedTasksToday = tasks.filter((t) => t.status === 'completed').length
     const totalTasksToday = tasks.length
     const pomodoroTarget = 5
@@ -210,11 +229,10 @@ export default function ChildHomePage() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
-                        {(subjects.length > 0 ? subjects.slice(0, 4) : [
-                            { id: 'm1', name: 'Toán Học', description: subjectDesc['Toán Học'], lesson_count: 20 },
+                        {(subjects.length > 0 ? subjects.slice(0, 3) : [
+                            { id: 'm1', name: 'Toán', description: subjectDesc['Toán'], lesson_count: 20 },
                             { id: 'm2', name: 'Tiếng Việt', description: subjectDesc['Tiếng Việt'], lesson_count: 15 },
-                            { id: 'm3', name: 'Khoa Học', description: subjectDesc['Khoa Học'], lesson_count: 10 },
-                            { id: 'm4', name: 'Tiếng Anh', description: subjectDesc['Tiếng Anh'], lesson_count: 20 },
+                            { id: 'm3', name: 'Tiếng Anh', description: subjectDesc['Tiếng Anh'], lesson_count: 20 },
                         ]).map((subj) => {
                             const cfg = getSubjectConfig(subj.name)
                             const desc = subjectDesc[subj.name] || subj.description || 'Khám phá bài học thú vị ngay nào!'

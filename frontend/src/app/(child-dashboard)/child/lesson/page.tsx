@@ -9,6 +9,17 @@ import { cn } from '@/lib/utils'
 
 type TaskItem = Task
 
+const CORE_SUBJECT_KEYS = ['toan', 'tieng viet', 'tieng anh']
+
+function normalizeSubjectName(name: string) {
+    return name.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim()
+}
+
+function isCoreSubject(name: string) {
+    const normalized = normalizeSubjectName(name)
+    return CORE_SUBJECT_KEYS.some((key) => normalized.includes(key))
+}
+
 function LessonContent() {
     const searchParams = useSearchParams()
     const supabase = useMemo(() => createClient(), [])
@@ -18,7 +29,7 @@ function LessonContent() {
 
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
-    const [grade, setGrade] = useState<number>(4)
+    const [grade, setGrade] = useState<number>(1)
     const [subjects, setSubjects] = useState<Subject[]>([])
     const [lessonsBySubject, setLessonsBySubject] = useState<Record<string, Lesson[]>>({})
     const [tasks, setTasks] = useState<TaskItem[]>([])
@@ -44,7 +55,12 @@ function LessonContent() {
                     api.tasks.listForChild(user.id),
                 ])
 
-                const nextGrade = profile?.grade || 4
+                if (profile?.grade === null || profile?.grade === undefined) {
+                    setError('Bé chưa được gán lớp. Vui lòng nhờ phụ huynh cập nhật hồ sơ.')
+                    return
+                }
+
+                const nextGrade = profile.grade
                 setGrade(nextGrade)
 
                 const taskList = taskRes?.data ?? taskRes ?? []
@@ -90,7 +106,7 @@ function LessonContent() {
                 }
 
                 const subjectRes = await api.subjects.listByGrade(nextGrade)
-                const subjectList: Subject[] = subjectRes?.data ?? []
+                const subjectList: Subject[] = (subjectRes?.data ?? []).filter((subject) => isCoreSubject(subject.name))
                 setSubjects(subjectList)
 
                 const lessonResults = await Promise.all(

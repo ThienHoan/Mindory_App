@@ -2,14 +2,32 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { api, Lesson, Quiz, Subject, Task } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 
 type TaskItem = Task
 
+const CORE_SUBJECT_KEYS = ['toan', 'tieng viet', 'tieng anh']
+
+function normalizeSubjectName(name: string) {
+    return name.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim()
+}
+
+function isCoreSubject(name: string) {
+    const normalized = normalizeSubjectName(name)
+    return CORE_SUBJECT_KEYS.some((key) => normalized.includes(key))
+}
+
 const ACTIVE_SESSION_PREFIX = 'mindory:active-session:'
+
+type PomodoroPhase = 'quiz' | 'game' | 'break'
+
+const POMODORO_TOTAL_SECONDS = 10 * 60
+const QUESTIONS_PER_GAME = 2
+const BREAK_PHASE_SECONDS = 30
+const RANDOM_GAME_VIEWS = ['memory', 'maze', 'music'] as const
 
 function getSessionKey(taskId: string) {
     return `${ACTIVE_SESSION_PREFIX}${taskId}`
@@ -21,19 +39,21 @@ function formatTime(seconds: number) {
     return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
+function pickRandomGameView() {
+    return RANDOM_GAME_VIEWS[Math.floor(Math.random() * RANDOM_GAME_VIEWS.length)]
+}
+
 function ResultScreen({
     score,
     total,
     rewardType,
     rewardMinutes,
-    onHome,
     onRetry,
 }: {
     score: number
     total: number
     rewardType?: 'game' | 'music' | null
     rewardMinutes?: number
-    onHome: () => void
     onRetry: () => void
 }) {
     const pct = total > 0 ? Math.round((score / total) * 100) : 0
@@ -83,19 +103,18 @@ function ResultScreen({
                     </div>
                 )}
 
-                <div className="flex flex-col gap-3 w-full">
-                    <button
-                        onClick={onHome}
-                        className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white font-black rounded-2xl text-sm"
-                    >
-                        Về trang chủ
-                    </button>
-                    <button
-                        onClick={onRetry}
-                        className="w-full py-3.5 border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold rounded-2xl text-sm"
-                    >
-                        Làm lại
-                    </button>
+                <div className="w-full space-y-4">
+                    <div className="flex flex-col gap-3">
+                        <button
+                            onClick={onRetry}
+                            className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 text-white font-black rounded-2xl text-sm"
+                        >
+                            Làm lại phiên này
+                        </button>
+                        <Link href="/child" className="w-full py-3.5 border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold rounded-2xl text-sm text-center">
+                            Về trang chủ
+                        </Link>
+                    </div>
                 </div>
             </div>
         </div>
@@ -104,19 +123,17 @@ function ResultScreen({
 
 function QuizContent() {
     const searchParams = useSearchParams()
-    const router = useRouter()
     const supabase = useMemo(() => createClient(), [])
 
     const subjectIdFilter = searchParams.get('subjectId')
     const taskId = searchParams.get('taskId')
     const lessonId = searchParams.get('lessonId')
     const lessonTitle = searchParams.get('lessonTitle') || 'Kiểm tra bài học'
-    const requestedDuration = Number(searchParams.get('duration') || 10)
 
     const [loading, setLoading] = useState(true)
     const [submitting, setSubmitting] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [grade, setGrade] = useState<number>(4)
+    const [grade, setGrade] = useState<number>(1)
     const [childId, setChildId] = useState<string | null>(null)
 
     const [subjects, setSubjects] = useState<Subject[]>([])
@@ -125,7 +142,14 @@ function QuizContent() {
 
     const [quizzes, setQuizzes] = useState<Quiz[]>([])
     const [sessionId, setSessionId] = useState<string | null>(null)
-    const [timerSeconds, setTimerSeconds] = useState(Math.max(60, requestedDuration * 60))
+    const [sessionTotalSeconds, setSessionTotalSeconds] = useState(POMODORO_TOTAL_SECONDS)
+    const [totalSecondsRemaining, setTotalSecondsRemaining] = useState(POMODORO_TOTAL_SECONDS)
+    const [phase, setPhase] = useState<PomodoroPhase>('quiz')
+    const [phaseSecondsRemaining, setPhaseSecondsRemaining] = useState(0)
+    const [cycleCount, setCycleCount] = useState(1)
+    const [answeredSinceGame, setAnsweredSinceGame] = useState(0)
+    const [gameView, setGameView] = useState<(typeof RANDOM_GAME_VIEWS)[number]>(() => pickRandomGameView())
+    const [gameSeed, setGameSeed] = useState(() => Date.now())
 
     const [currentQ, setCurrentQ] = useState(0)
     const [selected, setSelected] = useState<number | null>(null)
@@ -185,11 +209,16 @@ function QuizContent() {
                         api.tasks.listForChild(user.id),
                     ])
 
-                    const nextGrade = profile?.grade || 4
+                    if (profile?.grade === null || profile?.grade === undefined) {
+                        setError('Bé chưa được gán lớp. Vui lòng nhờ phụ huynh cập nhật hồ sơ.')
+                        return
+                    }
+
+                    const nextGrade = profile.grade
                     setGrade(nextGrade)
 
                     const trueSubjectRes = await api.subjects.listByGrade(nextGrade)
-                    const subjectList: Subject[] = trueSubjectRes?.data ?? []
+                    const subjectList: Subject[] = (trueSubjectRes?.data ?? []).filter((subject) => isCoreSubject(subject.name))
                     setSubjects(subjectList)
                     setTasks((taskRes?.data ?? taskRes ?? []) as TaskItem[])
 
@@ -217,11 +246,18 @@ function QuizContent() {
                 setQuizzes(quizData)
                 setAnswers(new Array(quizData.length).fill(null))
 
-                if (taskId) {
-                    const task = await api.tasks.get(taskId)
-                    const duration = Number(task?.session_duration_minutes) || requestedDuration
-                    setTimerSeconds(Math.max(60, duration * 60))
+                const task = taskId ? await api.tasks.get(taskId) : null
 
+                setSessionTotalSeconds(POMODORO_TOTAL_SECONDS)
+                setTotalSecondsRemaining(POMODORO_TOTAL_SECONDS)
+                setPhase('quiz')
+                setPhaseSecondsRemaining(0)
+                setCycleCount(1)
+                setAnsweredSinceGame(0)
+                setGameView(pickRandomGameView())
+                setGameSeed(Date.now())
+
+                if (taskId) {
                     if (task?.status !== 'completed') {
                         let activeSessionId: string | null = null
                         const key = getSessionKey(taskId)
@@ -255,12 +291,12 @@ function QuizContent() {
         }
 
         load()
-    }, [lessonId, requestedDuration, supabase, taskId])
+    }, [lessonId, supabase, taskId])
 
     useEffect(() => {
         if (!lessonId || loading || finished) return
         const timer = window.setInterval(() => {
-            setTimerSeconds((prev) => {
+            setTotalSecondsRemaining((prev) => {
                 if (prev <= 1) {
                     window.clearInterval(timer)
                     return 0
@@ -273,10 +309,47 @@ function QuizContent() {
     }, [finished, lessonId, loading])
 
     useEffect(() => {
-        if (lessonId && timerSeconds === 0 && !finished && !loading) {
+        if (lessonId && totalSecondsRemaining === 0 && !finished && !loading) {
             void handleFinish()
         }
-    }, [finished, handleFinish, lessonId, loading, timerSeconds])
+    }, [finished, handleFinish, lessonId, loading, totalSecondsRemaining])
+
+    useEffect(() => {
+        if (!lessonId || loading || finished || phase !== 'break') return
+        const timer = window.setInterval(() => {
+            setPhaseSecondsRemaining((prev) => {
+                if (prev <= 1) {
+                    window.clearInterval(timer)
+                    return 0
+                }
+                return prev - 1
+            })
+        }, 1000)
+
+        return () => window.clearInterval(timer)
+    }, [finished, lessonId, loading, phase])
+
+    useEffect(() => {
+        if (!lessonId || loading || finished || phase !== 'break' || phaseSecondsRemaining > 0) return
+        setPhase('quiz')
+        setSelected(null)
+        setConfirmed(false)
+        setCycleCount((prev) => prev + 1)
+    }, [finished, lessonId, loading, phase, phaseSecondsRemaining])
+
+    useEffect(() => {
+        if (!lessonId || loading || finished || phase !== 'game') return
+
+        const onGameComplete = (event: MessageEvent) => {
+            const data = event.data as { type?: string } | null
+            if (!data || data.type !== 'mindory:game-complete') return
+            setPhase('break')
+            setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
+        }
+
+        window.addEventListener('message', onGameComplete)
+        return () => window.removeEventListener('message', onGameComplete)
+    }, [finished, lessonId, loading, phase, totalSecondsRemaining])
 
     const filteredSubjects = useMemo(() => {
         if (!subjectIdFilter) return subjects
@@ -288,8 +361,12 @@ function QuizContent() {
     const answeredCount = answers.filter((a) => a !== null).length
     const progressPct = quizzes.length > 0 ? Math.round((answeredCount / quizzes.length) * 100) : 0
     const isCorrect = selected !== null && quiz ? selected === quiz.correct_index : false
+    const isQuizPhase = phase === 'quiz'
+    const phaseLabel = phase === 'quiz' ? 'Làm câu hỏi' : phase === 'game' ? 'Mini game' : 'Giải lao'
+    const questionsPerGame = QUESTIONS_PER_GAME
 
     const handleConfirm = () => {
+        if (!isQuizPhase) return
         if (selected === null || !quiz) return
         const nextAnswers = [...answers]
         nextAnswers[currentQ] = selected
@@ -298,21 +375,30 @@ function QuizContent() {
     }
 
     const handleNext = () => {
-        if (currentQ + 1 >= quizzes.length) {
-            void handleFinish()
-            return
-        }
-        setCurrentQ((q) => q + 1)
+        if (!isQuizPhase) return
+        const nextQuestionIndex = quizzes.length > 0 ? (currentQ + 1) % quizzes.length : 0
+        const nextAnsweredSinceGame = answeredSinceGame + 1
+        const shouldEnterMiniGame = nextAnsweredSinceGame >= questionsPerGame
+
+        setCurrentQ(nextQuestionIndex)
         setSelected(null)
         setConfirmed(false)
+
+        if (shouldEnterMiniGame) {
+            setPhase('game')
+            setPhaseSecondsRemaining(0)
+            setAnsweredSinceGame(0)
+            setGameView(pickRandomGameView())
+            setGameSeed(Date.now())
+        } else {
+            setAnsweredSinceGame(nextAnsweredSinceGame)
+        }
     }
 
     const handleSkip = () => {
-        if (currentQ + 1 >= quizzes.length) {
-            void handleFinish()
-            return
-        }
-        setCurrentQ((q) => q + 1)
+        if (!isQuizPhase) return
+        const nextQuestionIndex = quizzes.length > 0 ? (currentQ + 1) % quizzes.length : 0
+        setCurrentQ(nextQuestionIndex)
         setSelected(null)
         setConfirmed(false)
     }
@@ -325,6 +411,13 @@ function QuizContent() {
         setFinished(false)
         setRewardType(null)
         setRewardMinutes(0)
+        setTotalSecondsRemaining(sessionTotalSeconds)
+        setPhase('quiz')
+        setPhaseSecondsRemaining(0)
+        setCycleCount(1)
+        setAnsweredSinceGame(0)
+        setGameView(pickRandomGameView())
+        setGameSeed(Date.now())
     }
 
     if (loading) {
@@ -459,7 +552,6 @@ function QuizContent() {
                 total={quizzes.length}
                 rewardType={rewardType}
                 rewardMinutes={rewardMinutes}
-                onHome={() => router.push('/child')}
                 onRetry={handleRetry}
             />
         )
@@ -482,6 +574,7 @@ function QuizContent() {
                 </div>
                 <div className="shrink-0 text-right">
                     <span className="text-xs font-black text-gray-400">{currentQ + 1}/{quizzes.length}</span>
+                    <p className="text-[11px] font-black text-indigo-500">Chu kỳ {cycleCount}</p>
                 </div>
             </div>
 
@@ -492,104 +585,145 @@ function QuizContent() {
                 />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="bg-gradient-to-r from-purple-600 to-purple-500 px-6 py-5">
-                        <p className="text-purple-200 text-xs font-black uppercase tracking-widest mb-2">Question {currentQ + 1} of {quizzes.length}</p>
-                        <h2 className="text-white font-black text-xl leading-snug">{quiz?.question}</h2>
-                        <p className="text-purple-200 text-sm mt-2">Chọn đáp án đúng nhất</p>
-                    </div>
-
-                    <div className="p-5 space-y-3">
-                        {quiz?.options.map((option, idx) => {
-                            const letter = String.fromCharCode(65 + idx)
-                            let containerStyle = 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50 cursor-pointer'
-                            let letterStyle = 'bg-gray-100 text-gray-500'
-
-                            if (selected === idx && !confirmed) {
-                                containerStyle = 'border-purple-500 bg-purple-50'
-                                letterStyle = 'bg-purple-600 text-white'
-                            }
-                            if (confirmed && quiz) {
-                                if (idx === quiz.correct_index) {
-                                    containerStyle = 'border-green-400 bg-green-50 cursor-default'
-                                    letterStyle = 'bg-green-500 text-white'
-                                } else if (selected === idx) {
-                                    containerStyle = 'border-red-400 bg-red-50 cursor-default'
-                                    letterStyle = 'bg-red-500 text-white'
-                                } else {
-                                    containerStyle = 'border-gray-100 bg-gray-50 opacity-50 cursor-default'
-                                    letterStyle = 'bg-gray-200 text-gray-400'
-                                }
-                            }
-
-                            return (
-                                <button
-                                    key={idx}
-                                    disabled={confirmed}
-                                    onClick={() => setSelected(idx)}
-                                    className={cn('w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl border-2 transition-all duration-200 text-left', containerStyle)}
-                                >
-                                    <div className={cn('w-8 h-8 rounded-xl flex items-center justify-center text-sm font-black shrink-0', letterStyle)}>{letter}</div>
-                                    <span className="text-sm font-bold text-gray-700 flex-1">{option}</span>
-                                </button>
-                            )
-                        })}
-                    </div>
-
-                    {confirmed && (
-                        <div className={cn('mx-5 mb-5 px-4 py-3 rounded-2xl', isCorrect ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200')}>
-                            <p className={cn('text-sm font-black', isCorrect ? 'text-green-700' : 'text-red-700')}>
-                                {isCorrect ? 'Chính xác! Bé giỏi lắm!' : `Chưa đúng, đáp án đúng là: ${quiz?.options[quiz.correct_index]}`}
-                            </p>
-                        </div>
-                    )}
-
-                    <div className="px-5 pb-5 flex items-center gap-3">
-                        {!confirmed ? (
-                            <>
-                                <button onClick={handleSkip} className="w-1/3 py-4 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 font-black text-sm">
-                                    Bỏ qua
-                                </button>
-                                <button
-                                    disabled={selected === null}
-                                    onClick={handleConfirm}
-                                    className={cn(
-                                        'w-2/3 py-4 rounded-2xl font-black text-sm',
-                                        selected !== null ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                                    )}
-                                >
-                                    Xác nhận
-                                </button>
-                            </>
-                        ) : (
-                            <button onClick={handleNext} className="w-full py-4 rounded-2xl font-black text-sm bg-purple-600 hover:bg-purple-700 text-white">
-                                {currentQ + 1 >= quizzes.length ? 'Xem kết quả' : 'Câu tiếp theo'}
-                            </button>
-                        )}
-                    </div>
+            <div className="rounded-3xl border border-indigo-100 bg-indigo-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <p className="text-[11px] font-black uppercase tracking-widest text-indigo-500">Luồng Pomodoro Xen Kẽ</p>
+                    <p className="text-sm font-black text-indigo-900 mt-1">Pha hiện tại: {phaseLabel}</p>
+                    <p className="text-xs font-bold text-indigo-700 mt-1">Cứ hoàn thành đủ {questionsPerGame} câu sẽ mở 1 mini-game random trong cùng trang.</p>
                 </div>
-
-                <div className="space-y-4">
-                    <div className="bg-white rounded-3xl border border-gray-100 p-5 shadow-sm text-center">
-                        <p className="text-xs font-black uppercase tracking-widest text-gray-400">Pomodoro</p>
-                        <p className={cn('text-5xl font-black mt-2 tabular-nums', timerSeconds <= 60 ? 'text-red-500' : 'text-slate-800')}>
-                            {formatTime(timerSeconds)}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-2">Hết giờ sẽ tự nộp bài</p>
-                    </div>
-
-                    <div className="bg-gradient-to-br from-purple-600 to-violet-500 rounded-3xl p-5 text-white">
-                        <p className="text-xs font-black uppercase tracking-widest text-purple-200">Tiến độ</p>
-                        <p className="text-sm font-bold mt-2">Đúng: {score} / {quizzes.length}</p>
-                        <p className="text-sm font-bold">Đã trả lời: {answeredCount} câu</p>
-                    </div>
-
-                    <button onClick={handleSkip} className="w-full py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-900 text-white font-black text-sm">
-                        Skip Question
-                    </button>
+                <div className="text-right">
+                    <p className="text-[11px] font-black uppercase tracking-widest text-indigo-400">Còn lại toàn phiên</p>
+                    <p className={cn('text-2xl font-black tabular-nums', totalSecondsRemaining <= 60 ? 'text-red-500' : 'text-indigo-900')}>{formatTime(totalSecondsRemaining)}</p>
                 </div>
             </div>
+
+            {phase === 'game' ? (
+                <div className="rounded-3xl border border-gray-100 bg-white p-0 shadow-sm overflow-hidden">
+                    <iframe
+                        key={`${gameView}-${gameSeed}`}
+                        src={`/child/games?embed=1&view=${gameView}&randomLevel=1&seed=${gameSeed}`}
+                        className="h-[560px] w-full border-0 bg-white"
+                        title="Mini game"
+                    />
+                    <div className="p-3 text-right border-t border-gray-100 bg-white">
+                        <button
+                            onClick={() => {
+                                setPhase('break')
+                                setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
+                            }}
+                            className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-black text-white hover:bg-amber-600"
+                        >
+                            Đã xong trò này
+                        </button>
+                    </div>
+                </div>
+            ) : phase === 'break' ? (
+                <div className="rounded-3xl border border-sky-200 bg-sky-50 p-10 text-center shadow-sm">
+                    <p className="text-xs font-black uppercase tracking-widest text-sky-600">Giải lao</p>
+                    <p className="mt-2 text-base font-bold text-sky-700">Nghỉ ngắn rồi hệ thống tự quay lại màn câu hỏi.</p>
+                    <p className="mt-4 text-6xl font-black tabular-nums text-sky-900">{formatTime(phaseSecondsRemaining)}</p>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+                        <div className="bg-gradient-to-r from-purple-600 to-purple-500 px-6 py-5">
+                            <p className="text-purple-200 text-xs font-black uppercase tracking-widest mb-2">Question {currentQ + 1} of {quizzes.length}</p>
+                            <h2 className="text-white font-black text-xl leading-snug">{quiz?.question}</h2>
+                            <p className="text-purple-200 text-sm mt-2">Chọn đáp án đúng nhất</p>
+                        </div>
+
+                        <div className="p-5 space-y-3">
+                            {quiz?.options.map((option, idx) => {
+                                const letter = String.fromCharCode(65 + idx)
+                                let containerStyle = 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50 cursor-pointer'
+                                let letterStyle = 'bg-gray-100 text-gray-500'
+
+                                if (selected === idx && !confirmed) {
+                                    containerStyle = 'border-purple-500 bg-purple-50'
+                                    letterStyle = 'bg-purple-600 text-white'
+                                }
+                                if (confirmed && quiz) {
+                                    if (idx === quiz.correct_index) {
+                                        containerStyle = 'border-green-400 bg-green-50 cursor-default'
+                                        letterStyle = 'bg-green-500 text-white'
+                                    } else if (selected === idx) {
+                                        containerStyle = 'border-red-400 bg-red-50 cursor-default'
+                                        letterStyle = 'bg-red-500 text-white'
+                                    } else {
+                                        containerStyle = 'border-gray-100 bg-gray-50 opacity-50 cursor-default'
+                                        letterStyle = 'bg-gray-200 text-gray-400'
+                                    }
+                                }
+
+                                return (
+                                    <button
+                                        key={idx}
+                                        disabled={confirmed}
+                                        onClick={() => setSelected(idx)}
+                                        className={cn('w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl border-2 transition-all duration-200 text-left', containerStyle)}
+                                    >
+                                        <div className={cn('w-8 h-8 rounded-xl flex items-center justify-center text-sm font-black shrink-0', letterStyle)}>{letter}</div>
+                                        <span className="text-sm font-bold text-gray-700 flex-1">{option}</span>
+                                    </button>
+                                )
+                            })}
+                        </div>
+
+                        {confirmed && (
+                            <div className={cn('mx-5 mb-5 px-4 py-3 rounded-2xl', isCorrect ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200')}>
+                                <p className={cn('text-sm font-black', isCorrect ? 'text-green-700' : 'text-red-700')}>
+                                    {isCorrect ? 'Chính xác! Bé giỏi lắm!' : `Chưa đúng, đáp án đúng là: ${quiz?.options[quiz.correct_index]}`}
+                                </p>
+                            </div>
+                        )}
+
+                        <div className="px-5 pb-5 flex items-center gap-3">
+                            {!confirmed ? (
+                                <>
+                                    <button onClick={handleSkip} className="w-1/3 py-4 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 font-black text-sm">
+                                        Bỏ qua
+                                    </button>
+                                    <button
+                                        disabled={selected === null}
+                                        onClick={handleConfirm}
+                                        className={cn(
+                                            'w-2/3 py-4 rounded-2xl font-black text-sm',
+                                            selected !== null ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                                        )}
+                                    >
+                                        Xác nhận
+                                    </button>
+                                </>
+                            ) : (
+                                <button onClick={handleNext} className="w-full py-4 rounded-2xl font-black text-sm bg-purple-600 hover:bg-purple-700 text-white">
+                                    Câu tiếp theo
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div className="bg-white rounded-3xl border border-gray-100 p-5 shadow-sm text-center">
+                            <p className="text-xs font-black uppercase tracking-widest text-gray-400">Pomodoro</p>
+                            <p className={cn('text-5xl font-black mt-2 tabular-nums', totalSecondsRemaining <= 60 ? 'text-red-500' : 'text-slate-800')}>
+                                {formatTime(totalSecondsRemaining)}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-2">Đang ở pha: {phaseLabel}</p>
+                        </div>
+
+                        <div className="bg-gradient-to-br from-purple-600 to-violet-500 rounded-3xl p-5 text-white">
+                            <p className="text-xs font-black uppercase tracking-widest text-purple-200">Tiến độ</p>
+                            <p className="text-sm font-bold mt-2">Đúng: {score} / {quizzes.length}</p>
+                            <p className="text-sm font-bold">Đã trả lời: {answeredCount} câu</p>
+                            <p className="text-sm font-bold">Còn {questionsPerGame - answeredSinceGame} câu nữa để vào game</p>
+                        </div>
+
+                        <button onClick={handleSkip} className="w-full py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-900 text-white font-black text-sm">
+                            Skip Question
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

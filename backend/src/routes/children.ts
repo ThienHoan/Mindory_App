@@ -5,7 +5,14 @@ const router = Router();
 
 // Create Child
 router.post('/', async (req, res) => {
-    const { email, password, fullName, parentId } = req.body;
+    const { email, password, fullName, parentId, grade } = req.body;
+    const normalizedGrade = grade !== undefined ? Number(grade) : null;
+
+    if (normalizedGrade !== null && (!Number.isInteger(normalizedGrade) || normalizedGrade < 1 || normalizedGrade > 5)) {
+        res.status(400).json({ error: 'Grade must be an integer between 1 and 5' });
+        return;
+    }
+
 
     try {
         // 1. Create User
@@ -16,7 +23,8 @@ router.post('/', async (req, res) => {
             user_metadata: {
                 full_name: fullName,
                 role: 'child',
-                parent_id: parentId
+                parent_id: parentId,
+                grade: normalizedGrade,
             }
         });
 
@@ -33,6 +41,7 @@ router.post('/', async (req, res) => {
                     full_name: fullName,
                     role: 'child',
                     parent_id: parentId,
+                    grade: normalizedGrade,
                 },
                 { onConflict: 'id' }
             );
@@ -68,6 +77,68 @@ router.get('/', async (req, res) => {
     }
 
     res.json(data);
+});
+
+// Update Child (grade)
+router.patch('/:id', async (req, res) => {
+    const { id } = req.params;
+    const { parentId, grade } = req.body;
+
+    if (!parentId) {
+        res.status(400).json({ error: 'Missing parentId' });
+        return;
+    }
+
+    const normalizedGrade = grade !== undefined ? Number(grade) : undefined;
+
+    if (normalizedGrade !== undefined && (!Number.isInteger(normalizedGrade) || normalizedGrade < 1 || normalizedGrade > 5)) {
+        res.status(400).json({ error: 'Grade must be an integer between 1 and 5' });
+        return;
+    }
+
+    try {
+        const { data: childProfile, error: childError } = await supabaseAdmin
+            .from('profiles')
+            .select('id, parent_id')
+            .eq('id', id)
+            .single();
+
+        if (childError || !childProfile) {
+            res.status(404).json({ error: 'Child not found' });
+            return;
+        }
+
+        if (childProfile.parent_id !== parentId) {
+            res.status(403).json({ error: 'Not allowed to update this child' });
+            return;
+        }
+
+        const updatePayload: Record<string, unknown> = {};
+        if (normalizedGrade !== undefined) {
+            updatePayload.grade = normalizedGrade;
+        }
+
+        if (Object.keys(updatePayload).length === 0) {
+            res.status(400).json({ error: 'No fields to update' });
+            return;
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('profiles')
+            .update(updatePayload)
+            .eq('id', id)
+            .select('id, full_name, grade')
+            .single();
+
+        if (error) {
+            res.status(500).json({ error: error.message });
+            return;
+        }
+
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 export default router;

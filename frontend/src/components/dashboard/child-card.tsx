@@ -34,7 +34,7 @@ export function ChildCard({
     id,
     name,
     email,
-    grade = 4,
+    grade = 1,
     points = 0,
     streak = 0,
     rank,

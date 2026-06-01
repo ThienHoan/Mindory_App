@@ -25,6 +25,11 @@ body {
   font-family: var(--font-sans), "Segoe UI", "Noto Sans", sans-serif;
 }
 
+/* Hide Next.js dev indicator ("N") to avoid leaking into embedded game iframes */
+nextjs-portal {
+  display: none !important;
+}
+
 @keyframes ctm-float {
   0%,
   100% {

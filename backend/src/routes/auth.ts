@@ -10,7 +10,7 @@ router.get('/me', authenticate, async (req, res) => {
     try {
         const { data, error } = await supabaseAdmin
             .from('profiles')
-            .select('id, email, full_name, role, parent_id, avatar_url, created_at')
+            .select('id, email, full_name, role, parent_id, avatar_url, grade, age, created_at')
             .eq('id', req.user!.id)
             .single();
 
