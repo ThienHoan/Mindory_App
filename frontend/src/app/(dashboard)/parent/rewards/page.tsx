@@ -107,16 +107,16 @@ export default function ParentRewardsPage() {
                     <h2 className="text-lg font-black text-slate-900">Thêm quà thưởng mới</h2>
                     <div className="mt-4 space-y-3">
                         <label className="block">
-                            <span className="text-xs font-bold uppercase text-slate-400">Tên quà thưởng</span>
-                            <input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400" placeholder="Đi công viên" />
+                            <span className="text-xs font-extrabold uppercase text-slate-700">Tên quà thưởng</span>
+                            <input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 font-medium placeholder:text-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" placeholder="Đi công viên" />
                         </label>
                         <label className="block">
-                            <span className="text-xs font-bold uppercase text-slate-400">Mô tả</span>
-                            <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1 min-h-24 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400" placeholder="Cuối tuần cả nhà đi chơi" />
+                            <span className="text-xs font-extrabold uppercase text-slate-700">Mô tả</span>
+                            <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1 min-h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 font-medium placeholder:text-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" placeholder="Cuối tuần cả nhà đi chơi" />
                         </label>
                         <label className="block">
-                            <span className="text-xs font-bold uppercase text-slate-400">Cần XP</span>
-                            <input type="number" min={1} value={costPoints} onChange={(e) => setCostPoints(Number(e.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+                            <span className="text-xs font-extrabold uppercase text-slate-700">Cần XP</span>
+                            <input type="number" min={1} value={costPoints} onChange={(e) => setCostPoints(Number(e.target.value))} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 font-medium outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
                         </label>
                     </div>
                     <button disabled={saving || !title.trim()} className="mt-5 w-full rounded-2xl bg-indigo-600 py-3 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-50">
