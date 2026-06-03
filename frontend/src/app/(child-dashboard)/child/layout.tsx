@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 
 interface ChildProfile {
     avatar_url: string | null
@@ -80,7 +80,7 @@ const navigation = [
     },
 ]
 
-export default function ChildLayout({ children }: { children: React.ReactNode }) {
+function ChildLayoutContent({ children }: { children: React.ReactNode }) {
     const pathname = usePathname()
     const searchParams = useSearchParams()
     const router = useRouter()
@@ -316,5 +316,19 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
             </div>
         ) : null}
         </>
+    )
+}
+
+export default function ChildLayout({ children }: { children: React.ReactNode }) {
+    return (
+        <Suspense
+            fallback={
+                <div className="flex h-screen items-center justify-center bg-[#f8f7ff]">
+                    <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-500 border-t-transparent" />
+                </div>
+            }
+        >
+            <ChildLayoutContent>{children}</ChildLayoutContent>
+        </Suspense>
     )
 }
