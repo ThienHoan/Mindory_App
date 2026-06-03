@@ -49,7 +49,7 @@ app.use('/subjects', subjectRoutes);
 app.use('/lessons', lessonRoutes);
 app.use('/quizzes', quizRoutes);
 app.use('/sessions', sessionRoutes);
-app.use('/rewards', rewardRoutes);
+app.use(rewardRoutes);
 app.use('/mini-games', miniGameRoutes);
 app.use('/ai-quiz', aiQuizRoutes);
 app.use('/ai-assignments', aiAssignmentRoutes);

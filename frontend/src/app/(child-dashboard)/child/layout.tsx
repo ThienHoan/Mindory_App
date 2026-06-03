@@ -135,9 +135,9 @@ function ChildLayoutContent({ children }: { children: React.ReactNode }) {
                 <div className="p-4">
                     <div className="rounded-2xl bg-purple-600 p-4 text-white">
                         <p className="text-[10px] font-black uppercase tracking-widest text-purple-200 mb-1">SHOP ĐỔI QUÀ</p>
-                        <button className="w-full mt-2 py-2.5 bg-white text-purple-600 rounded-xl text-sm font-black hover:bg-purple-50 transition-all active:scale-95">
+                        <Link href="/child/rewards" className="w-full mt-2 py-2.5 bg-white text-purple-600 rounded-xl text-sm font-black hover:bg-purple-50 transition-all active:scale-95 block text-center">
                             Đổi quà ngay
-                        </button>
+                        </Link>
                     </div>
                     <button
                         onClick={handleSignOut}

@@ -1,4 +1,4 @@
-﻿import { createClient } from './supabase/client'
+import { createClient } from './supabase/client'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
 const inflightRequests = new Map<string, Promise<unknown>>()
@@ -130,6 +130,29 @@ export interface MiniGamePlayResult {
     currentStreak: number
     bestStreak: number
     totalStars: number
+}
+
+export interface RewardItem {
+    id: string
+    parent_id: string
+    title: string
+    description?: string | null
+    cost_points: number
+    is_active: boolean
+    created_at: string
+}
+
+export interface RewardRedemption {
+    id: string
+    reward_item_id?: string | null
+    child_id: string
+    parent_id: string
+    title: string
+    cost_points: number
+    status: 'requested' | 'approved' | 'fulfilled' | 'rejected'
+    requested_at: string
+    resolved_at?: string | null
+    profiles?: { full_name: string | null } | null
 }
 
 export interface MiniGameParentStats {
@@ -468,6 +491,108 @@ export const api = {
             })
             return normalizeObjectResponse<AIAssignment>(raw)
         },
-    }
+    },
+    rewards: {
+        /** Lấy danh sách quà trong kho (reward_items).
+         *  - Nếu truyền childId → lấy quà của parent_id tương ứng bé đó.
+         *  - Nếu truyền parentId → lấy tất cả quà của parent này (trang quản lý).
+         */
+        listStore: async (params: { childId?: string; parentId?: string }): Promise<RewardItem[]> => {
+            const qs = new URLSearchParams()
+            if (params.childId) qs.set('childId', params.childId)
+            if (params.parentId) qs.set('parentId', params.parentId)
+            const raw = await requestJson<unknown>(`/reward-store?${qs.toString()}`)
+            if (Array.isArray(raw)) return raw as RewardItem[]
+            if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+                return (raw as { data: RewardItem[] }).data
+            }
+            return []
+        },
+
+        /** Lấy danh sách yêu cầu đổi quà (reward_redemptions).
+         *  - childId → lấy lịch sử đổi quà của bé.
+         *  - parentId → lấy tất cả yêu cầu đổi quà con của parent.
+         */
+        listRedemptions: async (params: { childId?: string; parentId?: string }): Promise<RewardRedemption[]> => {
+            const qs = new URLSearchParams()
+            if (params.childId) qs.set('childId', params.childId)
+            if (params.parentId) qs.set('parentId', params.parentId)
+            const raw = await requestJson<unknown>(`/reward-redemptions?${qs.toString()}`)
+            if (Array.isArray(raw)) return raw as RewardRedemption[]
+            if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+                return (raw as { data: RewardRedemption[] }).data
+            }
+            return []
+        },
+
+        /** Bé đổi quà: trừ XP và tạo redemption mới với status='requested'. */
+        redeem: async (itemId: string, childId: string): Promise<{ xp: number }> => {
+            const raw = await requestJson<unknown>(`/reward-store/${encodeURIComponent(itemId)}/redeem`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ childId }),
+            })
+            return normalizeObjectResponse<{ xp: number }>(raw)
+        },
+
+        /** Bé xác nhận đã nhận quà (fulfilled). */
+        fulfillRedemption: async (redemptionId: string, childId: string): Promise<RewardRedemption> => {
+            const raw = await requestJson<unknown>(`/reward-redemptions/${encodeURIComponent(redemptionId)}/fulfill`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ childId }),
+            })
+            return normalizeObjectResponse<RewardRedemption>(raw)
+        },
+
+        /** Ba/mẹ tạo quà mới trong kho. */
+        createStoreItem: async (data: {
+            parentId: string
+            title: string
+            description?: string
+            costPoints: number
+        }): Promise<RewardItem> => {
+            const raw = await requestJson<unknown>('/reward-store', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            })
+            return normalizeObjectResponse<RewardItem>(raw)
+        },
+
+        /** Ba/mẹ cập nhật quà (ẩn/hiện). */
+        updateStoreItem: async (itemId: string, data: { parentId: string; isActive: boolean }): Promise<RewardItem> => {
+            const raw = await requestJson<unknown>(`/reward-store/${encodeURIComponent(itemId)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            })
+            return normalizeObjectResponse<RewardItem>(raw)
+        },
+
+        /** Ba/mẹ xóa quà khỏi kho. */
+        deleteStoreItem: async (itemId: string, parentId: string): Promise<void> => {
+            await requestJson<unknown>(`/reward-store/${encodeURIComponent(itemId)}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ parentId }),
+            })
+        },
+
+        /** Ba/mẹ duyệt / từ chối yêu cầu đổi quà. */
+        updateRedemptionStatus: async (
+            redemptionId: string,
+            parentId: string,
+            status: 'approved' | 'fulfilled' | 'rejected'
+        ): Promise<RewardRedemption> => {
+            const raw = await requestJson<unknown>(`/reward-redemptions/${encodeURIComponent(redemptionId)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ parentId, status }),
+            })
+            return normalizeObjectResponse<RewardRedemption>(raw)
+        },
+    },
 }
+
 

@@ -3,17 +3,13 @@ import { supabaseAdmin } from '../lib/supabase';
 
 const router = Router();
 
-// =========================================================
-// REWARD STORE  (reward_items table)
-// =========================================================
-
 /**
  * GET /reward-store
  * Query params:
  *   - parentId  → lấy tất cả quà của parent (trang quản lý ba/mẹ)
  *   - childId   → lấy quà của parent_id tương ứng với bé (trang bé)
  */
-router.get('/reward-store', async (req, res) => {
+router.get('/', async (req, res) => {
     const { parentId, childId } = req.query;
 
     if (!parentId && !childId) {
@@ -39,14 +35,12 @@ router.get('/reward-store', async (req, res) => {
             resolvedParentId = profile.parent_id;
         }
 
-        let query = supabaseAdmin
+        const { data, error } = await supabaseAdmin
             .from('reward_items')
             .select('*')
             .eq('parent_id', resolvedParentId!)
             .is('deleted_at', null)
             .order('created_at', { ascending: false });
-
-        const { data, error } = await query;
 
         if (error) {
             res.status(500).json({ error: error.message });
@@ -63,7 +57,7 @@ router.get('/reward-store', async (req, res) => {
  * Body: { parentId, title, description?, costPoints }
  * Ba/mẹ tạo quà mới.
  */
-router.post('/reward-store', async (req, res) => {
+router.post('/', async (req, res) => {
     const { parentId, title, description, costPoints } = req.body;
 
     if (!parentId || !title || !costPoints) {
@@ -94,7 +88,7 @@ router.post('/reward-store', async (req, res) => {
  * Body: { parentId, isActive }
  * Ba/mẹ ẩn/hiện quà.
  */
-router.patch('/reward-store/:id', async (req, res) => {
+router.patch('/:id', async (req, res) => {
     const { id } = req.params;
     const { parentId, isActive } = req.body;
 
@@ -128,7 +122,7 @@ router.patch('/reward-store/:id', async (req, res) => {
  * Body: { parentId }
  * Ba/mẹ xóa quà (soft delete).
  */
-router.delete('/reward-store/:id', async (req, res) => {
+router.delete('/:id', async (req, res) => {
     const { id } = req.params;
     const { parentId } = req.body;
 
@@ -155,7 +149,7 @@ router.delete('/reward-store/:id', async (req, res) => {
  * Body: { childId }
  * Bé đổi quà: kiểm tra XP, trừ XP, tạo redemption với status='requested'.
  */
-router.post('/reward-store/:id/redeem', async (req, res) => {
+router.post('/:id/redeem', async (req, res) => {
     const { id } = req.params;
     const { childId } = req.body;
 
@@ -222,166 +216,6 @@ router.post('/reward-store/:id/redeem', async (req, res) => {
         if (redemptionErr) throw redemptionErr;
 
         res.json({ xp: newXp });
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// =========================================================
-// REWARD REDEMPTIONS  (reward_redemptions table)
-// =========================================================
-
-/**
- * GET /reward-redemptions
- * Query params:
- *   - childId   → lịch sử đổi quà của bé
- *   - parentId  → tất cả yêu cầu đổi quà dưới quyền parent
- */
-router.get('/reward-redemptions', async (req, res) => {
-    const { childId, parentId } = req.query;
-
-    if (!childId && !parentId) {
-        res.status(400).json({ error: 'Cần truyền childId hoặc parentId' });
-        return;
-    }
-
-    try {
-        let query = supabaseAdmin
-            .from('reward_redemptions')
-            .select('*, profiles!reward_redemptions_child_id_fkey(full_name)')
-            .order('requested_at', { ascending: false });
-
-        if (childId) {
-            query = query.eq('child_id', String(childId));
-        } else {
-            query = query.eq('parent_id', String(parentId));
-        }
-
-        const { data, error } = await query;
-
-        if (error) {
-            res.status(500).json({ error: error.message });
-            return;
-        }
-        res.json(data);
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * PATCH /reward-redemptions/:id
- * Body: { parentId, status: 'approved' | 'fulfilled' | 'rejected' }
- * Ba/mẹ duyệt hoặc từ chối yêu cầu đổi quà.
- */
-router.patch('/reward-redemptions/:id', async (req, res) => {
-    const { id } = req.params;
-    const { parentId, status } = req.body;
-
-    if (!parentId || !status) {
-        res.status(400).json({ error: 'Thiếu parentId hoặc status' });
-        return;
-    }
-    if (!['approved', 'fulfilled', 'rejected'].includes(status)) {
-        res.status(400).json({ error: 'status không hợp lệ' });
-        return;
-    }
-
-    try {
-        // Kiểm tra redemption thuộc parent này
-        const { data: existing, error: findErr } = await supabaseAdmin
-            .from('reward_redemptions')
-            .select('id, status, child_id, cost_points')
-            .eq('id', id)
-            .eq('parent_id', parentId)
-            .single();
-
-        if (findErr || !existing) {
-            res.status(404).json({ error: 'Không tìm thấy yêu cầu đổi quà' });
-            return;
-        }
-
-        // Nếu rejected: hoàn lại XP cho bé
-        if (status === 'rejected' && existing.status !== 'rejected') {
-            const { data: childProfile } = await supabaseAdmin
-                .from('profiles')
-                .select('xp')
-                .eq('id', existing.child_id)
-                .single();
-
-            if (childProfile) {
-                await supabaseAdmin
-                    .from('profiles')
-                    .update({ xp: (childProfile.xp ?? 0) + existing.cost_points })
-                    .eq('id', existing.child_id);
-            }
-        }
-
-        const { data, error } = await supabaseAdmin
-            .from('reward_redemptions')
-            .update({
-                status,
-                resolved_at: ['approved', 'fulfilled', 'rejected'].includes(status)
-                    ? new Date().toISOString()
-                    : null,
-            })
-            .eq('id', id)
-            .select('*, profiles!reward_redemptions_child_id_fkey(full_name)')
-            .single();
-
-        if (error) {
-            res.status(500).json({ error: error.message });
-            return;
-        }
-        res.json(data);
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * PATCH /reward-redemptions/:id/fulfill
- * Body: { childId }
- * Bé xác nhận đã nhận quà → status = 'fulfilled'.
- */
-router.patch('/reward-redemptions/:id/fulfill', async (req, res) => {
-    const { id } = req.params;
-    const { childId } = req.body;
-
-    if (!childId) {
-        res.status(400).json({ error: 'Thiếu childId' });
-        return;
-    }
-
-    try {
-        const { data: existing, error: findErr } = await supabaseAdmin
-            .from('reward_redemptions')
-            .select('id, status, child_id')
-            .eq('id', id)
-            .eq('child_id', childId)
-            .single();
-
-        if (findErr || !existing) {
-            res.status(404).json({ error: 'Không tìm thấy yêu cầu đổi quà' });
-            return;
-        }
-        if (existing.status !== 'approved') {
-            res.status(400).json({ error: 'Chỉ có thể xác nhận khi quà đã được ba/mẹ duyệt' });
-            return;
-        }
-
-        const { data, error } = await supabaseAdmin
-            .from('reward_redemptions')
-            .update({ status: 'fulfilled', resolved_at: new Date().toISOString() })
-            .eq('id', id)
-            .select()
-            .single();
-
-        if (error) {
-            res.status(500).json({ error: error.message });
-            return;
-        }
-        res.json(data);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }

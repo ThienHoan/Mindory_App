@@ -10,7 +10,8 @@ import {
     SparklesIcon,
     ChartBarIcon,
     UserCircleIcon,
-    ArrowLeftOnRectangleIcon
+    ArrowLeftOnRectangleIcon,
+    GiftIcon
 } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 
@@ -19,6 +20,7 @@ const navigation = [
     { name: 'Quản lý con', href: '/parent/children', icon: UsersIcon },
     { name: 'Giao bài tập', href: '/parent/assign', icon: ClipboardDocumentCheckIcon },
     { name: 'Giao bài AI', href: '/parent/pdf-quiz', icon: SparklesIcon },
+    { name: 'Đổi thưởng', href: '/parent/rewards', icon: GiftIcon },
     { name: 'Báo cáo', href: '/parent/reports', icon: ChartBarIcon },
     { name: 'Hồ sơ', href: '/parent/profile', icon: UserCircleIcon },
 ]
