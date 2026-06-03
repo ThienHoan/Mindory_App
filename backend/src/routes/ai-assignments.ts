@@ -1,0 +1,158 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { supabaseAdmin } from '../lib/supabase';
+import { authenticate } from '../middleware/auth';
+import { requireRole } from '../middleware/requireRole';
+import { validate } from '../middleware/validate';
+
+const router = Router();
+
+const createAssignmentSchema = z.object({
+    documentId: z.string().uuid(),
+    childId: z.string().uuid(),
+});
+
+const completeAssignmentSchema = z.object({
+    status: z.literal('completed'),
+});
+
+// POST /ai-assignments
+router.post('/', authenticate, requireRole('parent'), validate(createAssignmentSchema), async (req, res) => {
+    const { documentId, childId } = req.body;
+    const parentId = req.user!.id;
+
+    const { data: doc, error: docError } = await supabaseAdmin
+        .from('pdf_documents')
+        .select('id, parent_id')
+        .eq('id', documentId)
+        .single();
+
+    if (docError || !doc) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+    }
+
+    if (doc.parent_id !== parentId) {
+        res.status(403).json({ error: 'Access denied to this document' });
+        return;
+    }
+
+    const { data: child, error: childError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, parent_id, role')
+        .eq('id', childId)
+        .single();
+
+    if (childError || !child) {
+        res.status(404).json({ error: 'Child not found' });
+        return;
+    }
+
+    if (child.role !== 'child' || child.parent_id !== parentId) {
+        res.status(403).json({ error: 'Child does not belong to this parent' });
+        return;
+    }
+
+    const { data: existing } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('*')
+        .eq('parent_id', parentId)
+        .eq('child_id', childId)
+        .eq('document_id', documentId)
+        .maybeSingle();
+
+    if (existing) {
+        res.json(existing);
+        return;
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .insert({ parent_id: parentId, child_id: childId, document_id: documentId })
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        res.status(500).json({ error: error?.message ?? 'Failed to assign quiz' });
+        return;
+    }
+
+    res.status(201).json(data);
+});
+
+// GET /ai-assignments
+router.get('/', authenticate, requireRole('parent'), async (req, res) => {
+    const parentId = req.user!.id;
+    const documentId = typeof req.query.documentId === 'string' ? req.query.documentId : undefined;
+    const childId = typeof req.query.childId === 'string' ? req.query.childId : undefined;
+
+    let query = supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('*, pdf_documents(id, title), profiles!assigned_ai_quizzes_child_id_fkey(id, full_name, email)')
+        .eq('parent_id', parentId)
+        .order('assigned_at', { ascending: false });
+
+    if (documentId) query = query.eq('document_id', documentId);
+    if (childId) query = query.eq('child_id', childId);
+
+    const { data, error } = await query;
+
+    if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+    }
+
+    res.json(data ?? []);
+});
+
+// GET /ai-assignments/mine
+router.get('/mine', authenticate, requireRole('child'), async (req, res) => {
+    const childId = req.user!.id;
+
+    const { data, error } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('*, pdf_documents(id, title, created_at), profiles!assigned_ai_quizzes_parent_id_fkey(id, full_name, email)')
+        .eq('child_id', childId)
+        .order('assigned_at', { ascending: false });
+
+    if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+    }
+
+    res.json(data ?? []);
+});
+
+// PATCH /ai-assignments/:id/complete
+router.patch('/:id/complete', authenticate, requireRole('child'), validate(completeAssignmentSchema), async (req, res) => {
+    const assignmentId = req.params.id;
+    const childId = req.user!.id;
+
+    const { data: assignment, error: findError } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('id')
+        .eq('id', assignmentId)
+        .eq('child_id', childId)
+        .maybeSingle();
+
+    if (findError || !assignment) {
+        res.status(404).json({ error: 'Assignment not found' });
+        return;
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('id', assignmentId)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        res.status(500).json({ error: error?.message ?? 'Failed to update assignment' });
+        return;
+    }
+
+    res.json(data);
+});
+
+export default router;

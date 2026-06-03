@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState, use } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, CheckCircle, XCircle, Play, Share2, Pencil, Trash2, Plus, Save } from 'lucide-react'
-import { AIQuizDocument, AIQuizQuestion, api } from '@/lib/api-client'
+import { AIAssignment, AIQuizDocument, AIQuizQuestion, api } from '@/lib/api-client'
+import { createClient } from '@/lib/supabase/client'
 
 type QuestionStatus = 'pending' | 'approved' | 'rejected'
 
@@ -42,10 +43,16 @@ function validateDraft(draft: QuestionDraft) {
 
 export default function ReviewQuizPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params)
+    const supabase = createClient()
     const [document, setDocument] = useState<AIQuizDocument | null>(null)
     const [questions, setQuestions] = useState<AIQuizQuestion[]>([])
     const [loading, setLoading] = useState(true)
     const [copied, setCopied] = useState(false)
+    const [children, setChildren] = useState<{ id: string; full_name: string | null; email: string | null }[]>([])
+    const [selectedChildId, setSelectedChildId] = useState('')
+    const [assignments, setAssignments] = useState<AIAssignment[]>([])
+    const [assigning, setAssigning] = useState(false)
+    const [assignError, setAssignError] = useState('')
 
     const [creating, setCreating] = useState(false)
     const [newDraft, setNewDraft] = useState<QuestionDraft>(makeEmptyDraft())
@@ -54,12 +61,14 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
 
     const loadData = useCallback(async () => {
         try {
-            const [doc, qs] = await Promise.all([
+            const [doc, qs, assignmentData] = await Promise.all([
                 api.aiQuizzes.getDocument(id),
-                api.aiQuizzes.listQuestions(id)
+                api.aiQuizzes.listQuestions(id),
+                api.aiAssignments.listParent({ documentId: id })
             ])
             setDocument(doc)
             setQuestions(qs)
+            setAssignments(assignmentData)
         } catch (error) {
             console.error('Failed to load:', error)
         } finally {
@@ -71,6 +80,34 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
         // eslint-disable-next-line react-hooks/set-state-in-effect
         void loadData()
     }, [loadData])
+
+    useEffect(() => {
+        let active = true
+        async function loadChildren() {
+            try {
+                const { data: { user } } = await supabase.auth.getUser()
+                if (!user) return
+                const { data } = await supabase
+                    .from('profiles')
+                    .select('id, full_name, email')
+                    .eq('parent_id', user.id)
+                    .eq('role', 'child')
+
+                if (!active) return
+                setChildren((data ?? []) as { id: string; full_name: string | null; email: string | null }[])
+                if (!selectedChildId && data && data.length > 0) {
+                    setSelectedChildId(data[0].id)
+                }
+            } catch (error) {
+                console.error('Failed to load children:', error)
+            }
+        }
+
+        void loadChildren()
+        return () => {
+            active = false
+        }
+    }, [selectedChildId, supabase])
     const handleStatusChange = async (questionId: string, status: QuestionStatus) => {
         try {
             await api.aiQuizzes.updateQuestionStatus(questionId, status)
@@ -177,9 +214,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     }
 
     const approvedCount = questions.filter((q) => q.status === 'approved').length
-    const childQuizPath = document?.lesson_id
-        ? `/child/quiz?lessonId=${document.lesson_id}&lessonTitle=${encodeURIComponent(document.title ?? 'Bài học')}`
-        : `/child/pdf-quiz/${id}`
+    const childQuizPath = `/child/pdf-quiz/${id}`
     const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}${childQuizPath}` : ''
 
     const handleCopy = () => {
@@ -187,6 +222,25 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
             navigator.clipboard.writeText(shareUrl)
             setCopied(true)
             setTimeout(() => setCopied(false), 2000)
+        }
+    }
+
+    const handleAssign = async () => {
+        if (!selectedChildId) {
+            setAssignError('Vui lòng chọn bé để giao bài.')
+            return
+        }
+        setAssigning(true)
+        setAssignError('')
+        try {
+            await api.aiAssignments.create({ documentId: id, childId: selectedChildId })
+            const updated = await api.aiAssignments.listParent({ documentId: id })
+            setAssignments(updated)
+        } catch (error) {
+            console.error('Assign failed:', error)
+            setAssignError('Không thể giao bài cho bé. Vui lòng thử lại.')
+        } finally {
+            setAssigning(false)
         }
     }
 
@@ -214,7 +268,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                 <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl p-6 border border-indigo-100 flex flex-col md:flex-row items-center justify-between gap-4">
                     <div>
                         <h3 className="font-semibold text-indigo-900 mb-1">Đã sẵn sàng cho bé!</h3>
-                        <p className="text-indigo-700/80 text-sm">Bạn đã duyệt {approvedCount} câu hỏi. {document.lesson_id ? 'Bé sẽ làm trong luồng quiz bài học.' : 'Gửi link này cho bé để bắt đầu.'}</p>
+                        <p className="text-indigo-700/80 text-sm">Bạn đã duyệt {approvedCount} câu hỏi. Gửi link này cho bé để bắt đầu.</p>
                     </div>
                     <div className="flex gap-2 w-full md:w-auto">
                         <button
@@ -234,6 +288,59 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                     </div>
                 </div>
             )}
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <h3 className="text-lg font-extrabold text-slate-900">Giao bài AI cho bé</h3>
+                        <p className="mt-1 text-xs text-slate-500">Chọn một bé để giao bài AI này. Bé sẽ thấy trong danh sách nhiệm vụ được giao.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <select
+                            value={selectedChildId}
+                            onChange={(e) => setSelectedChildId(e.target.value)}
+                            className="min-w-[240px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700"
+                        >
+                            {children.length === 0 ? (
+                                <option value="">Chưa có bé nào</option>
+                            ) : (
+                                children.map((child) => (
+                                    <option key={child.id} value={child.id}>
+                                        {child.full_name || child.email || 'Bé yêu'}
+                                    </option>
+                                ))
+                            )}
+                        </select>
+                        <button
+                            onClick={handleAssign}
+                            disabled={assigning || children.length === 0}
+                            className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                        >
+                            {assigning ? 'Đang giao...' : 'Giao bài'}
+                        </button>
+                    </div>
+                </div>
+                {assignError && (
+                    <p className="mt-3 text-sm text-red-500">{assignError}</p>
+                )}
+                {assignments.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                        {assignments.map((assignment) => (
+                            <div key={assignment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                                <div className="font-medium text-slate-700">
+                                    {assignment.profiles?.full_name || assignment.profiles?.email || 'Bé yêu'}
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-slate-500">
+                                    <span>{new Date(assignment.assigned_at).toLocaleDateString('vi-VN')}</span>
+                                    <span className={assignment.status === 'completed' ? 'text-emerald-600' : 'text-amber-600'}>
+                                        {assignment.status === 'completed' ? 'Đã hoàn thành' : 'Đang giao'}
+                                    </span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
 
             <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                 <span className="font-medium text-slate-700">Trạng thái: {approvedCount}/{questions.length} câu đã duyệt</span>

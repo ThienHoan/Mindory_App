@@ -61,7 +61,6 @@ export type AIQuizQuestionStatus = 'pending' | 'approved' | 'rejected'
 export interface AIQuizDocument {
     id: string
     parent_id: string
-    lesson_id?: string | null
     title: string
     file_url: string
     status: 'processing' | 'completed' | 'error'
@@ -82,6 +81,28 @@ export interface AIQuizQuestion {
 export interface AIQuizPlayable {
     document: Pick<AIQuizDocument, 'id' | 'title'> | null
     questions: Pick<AIQuizQuestion, 'id' | 'question' | 'options' | 'correct_index'>[]
+}
+
+export type AIAssignmentStatus = 'assigned' | 'completed'
+
+export interface AIAssignment {
+    id: string
+    document_id: string
+    parent_id: string
+    child_id: string
+    status: AIAssignmentStatus
+    assigned_at: string
+    completed_at?: string | null
+    pdf_documents?: {
+        id: string
+        title: string
+        created_at?: string
+    } | null
+    profiles?: {
+        id: string
+        full_name: string | null
+        email?: string | null
+    } | null
 }
 
 export interface SessionStartResult {
@@ -333,11 +354,11 @@ export const api = {
         },
     },
     aiQuizzes: {
-        upload: async (title: string, fileUrl: string, lessonId?: string): Promise<{ documentId: string }> => {
+        upload: async (title: string, fileUrl: string): Promise<{ documentId: string }> => {
             const raw = await requestJson<unknown>('/ai-quiz/upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, fileUrl, ...(lessonId ? { lessonId } : {}) }),
+                body: JSON.stringify({ title, fileUrl }),
             })
             return normalizeObjectResponse<{ documentId: string }>(raw)
         },
@@ -409,6 +430,44 @@ export const api = {
             })
             return normalizeObjectResponse<AIQuizQuestion>(raw)
         }
+    },
+    aiAssignments: {
+        create: async (payload: { documentId: string; childId: string }): Promise<AIAssignment> => {
+            const raw = await requestJson<unknown>('/ai-assignments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+            return normalizeObjectResponse<AIAssignment>(raw)
+        },
+        listParent: async (filters?: { documentId?: string; childId?: string }): Promise<AIAssignment[]> => {
+            const params = new URLSearchParams()
+            if (filters?.documentId) params.set('documentId', filters.documentId)
+            if (filters?.childId) params.set('childId', filters.childId)
+            const path = params.toString() ? `/ai-assignments?${params.toString()}` : '/ai-assignments'
+            const raw = await requestJson<unknown>(path)
+            if (Array.isArray(raw)) return raw as AIAssignment[]
+            if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+                return (raw as { data: AIAssignment[] }).data
+            }
+            return []
+        },
+        listMine: async (): Promise<AIAssignment[]> => {
+            const raw = await requestJson<unknown>('/ai-assignments/mine')
+            if (Array.isArray(raw)) return raw as AIAssignment[]
+            if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+                return (raw as { data: AIAssignment[] }).data
+            }
+            return []
+        },
+        markComplete: async (assignmentId: string): Promise<AIAssignment> => {
+            const raw = await requestJson<unknown>(`/ai-assignments/${assignmentId}/complete`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'completed' }),
+            })
+            return normalizeObjectResponse<AIAssignment>(raw)
+        },
     }
 }
 

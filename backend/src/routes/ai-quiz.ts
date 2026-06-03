@@ -15,7 +15,6 @@ type QuestionStatus = 'pending' | 'approved' | 'rejected';
 const uploadSchema = z.object({
     title: z.string().trim().min(1).max(150),
     fileUrl: z.string().url(),
-    lessonId: z.string().uuid().optional(),
 });
 
 const aiQuestionSchema = z.object({
@@ -327,7 +326,7 @@ async function syncApprovedQuestionToLessonQuiz(questionId: string) {
 }
 // POST /ai-quiz/upload
 router.post('/upload', authenticate, requireRole('parent'), validate(uploadSchema), async (req, res) => {
-    const { title, fileUrl, lessonId } = req.body;
+    const { title, fileUrl } = req.body;
     const parentId = req.user!.id;
 
     if (!isAllowedFileUrl(fileUrl)) {
@@ -336,7 +335,7 @@ router.post('/upload', authenticate, requireRole('parent'), validate(uploadSchem
     }
 
     const { data: doc, error: docError } = await supabaseAdmin.from('pdf_documents')
-        .insert({ parent_id: parentId, lesson_id: lessonId ?? null, title, file_url: fileUrl, status: 'processing' })
+        .insert({ parent_id: parentId, lesson_id: null, title, file_url: fileUrl, status: 'processing' })
         .select().single();
 
     if (docError || !doc) {

@@ -1,12 +1,16 @@
 ﻿'use client'
 
-import { useEffect, useState, use } from 'react'
+import { useEffect, useRef, useState, use } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '@/lib/api-client'
 import { Trophy, Star, ArrowRight, Home, RefreshCcw } from 'lucide-react'
 
 export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params)
+    const searchParams = useSearchParams()
+    const assignmentId = searchParams.get('assignmentId')
+    const completionSentRef = useRef(false)
     const [document, setDocument] = useState<any>(null)
     const [questions, setQuestions] = useState<any[]>([])
     const [currentIndex, setCurrentIndex] = useState(0)
@@ -19,6 +23,15 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
     useEffect(() => {
         loadData()
     }, [id])
+
+    useEffect(() => {
+        if (!isFinished || !assignmentId || completionSentRef.current) return
+        completionSentRef.current = true
+        api.aiAssignments.markComplete(assignmentId).catch((error) => {
+            console.error('Failed to mark assignment complete:', error)
+            completionSentRef.current = false
+        })
+    }, [assignmentId, isFinished])
 
     const loadData = async () => {
         try {

@@ -13,6 +13,7 @@ import sessionRoutes from './routes/sessions';
 import rewardRoutes from './routes/rewards';
 import miniGameRoutes from './routes/miniGames';
 import aiQuizRoutes from './routes/ai-quiz';
+import aiAssignmentRoutes from './routes/ai-assignments';
 
 dotenv.config();
 
@@ -51,6 +52,7 @@ app.use('/sessions', sessionRoutes);
 app.use('/rewards', rewardRoutes);
 app.use('/mini-games', miniGameRoutes);
 app.use('/ai-quiz', aiQuizRoutes);
+app.use('/ai-assignments', aiAssignmentRoutes);
 
 app.get('/', (req, res) => {
     res.json({ message: 'Mindory API is running', version: '1.0.0' });

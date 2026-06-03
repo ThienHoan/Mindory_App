@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { api, Lesson, Quiz, Subject, Task } from '@/lib/api-client'
+import { AIAssignment, api, Lesson, Quiz, Subject, Task } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 
 type TaskItem = Task
@@ -129,7 +129,10 @@ function QuizContent() {
     const subjectIdFilter = searchParams.get('subjectId')
     const taskId = searchParams.get('taskId')
     const lessonId = searchParams.get('lessonId')
+    const aiAssignmentId = searchParams.get('aiAssignmentId')
+    const aiDocumentId = searchParams.get('aiDocumentId') || searchParams.get('documentId')
     const lessonTitle = searchParams.get('lessonTitle') || 'Kiểm tra bài học'
+    const isAiQuiz = Boolean(aiDocumentId)
 
     const [loading, setLoading] = useState(true)
     const [submitting, setSubmitting] = useState(false)
@@ -140,6 +143,7 @@ function QuizContent() {
     const [subjects, setSubjects] = useState<Subject[]>([])
     const [lessonsBySubject, setLessonsBySubject] = useState<Record<string, Lesson[]>>({})
     const [tasks, setTasks] = useState<TaskItem[]>([])
+    const [aiAssignments, setAiAssignments] = useState<AIAssignment[]>([])
 
     const [quizzes, setQuizzes] = useState<Quiz[]>([])
     const [sessionId, setSessionId] = useState<string | null>(null)
@@ -163,6 +167,18 @@ function QuizContent() {
 
     const handleFinish = useCallback(async () => {
         setFinished(true)
+
+        if (aiAssignmentId && childId) {
+            setSubmitting(true)
+            try {
+                await api.aiAssignments.markComplete(aiAssignmentId)
+            } catch {
+                // keep result screen visible even if save fails
+            } finally {
+                setSubmitting(false)
+            }
+            return
+        }
 
         if (taskId && sessionId && childId) {
             setSubmitting(true)
@@ -190,7 +206,7 @@ function QuizContent() {
                 setSubmitting(false)
             }
         }
-    }, [answers, childId, quizzes, sessionId, taskId])
+    }, [aiAssignmentId, answers, childId, quizzes, sessionId, taskId])
 
     useEffect(() => {
         async function load() {
@@ -205,10 +221,11 @@ function QuizContent() {
 
                 setChildId(user.id)
 
-                if (!lessonId) {
-                    const [{ data: profile }, taskRes] = await Promise.all([
+                if (!lessonId && !aiDocumentId) {
+                    const [{ data: profile }, taskRes, aiRes] = await Promise.all([
                         supabase.from('profiles').select('*').eq('id', user.id).single(),
                         api.tasks.listForChild(user.id),
+                        api.aiAssignments.listMine(),
                     ])
 
                     if (profile?.grade === null || profile?.grade === undefined) {
@@ -223,6 +240,7 @@ function QuizContent() {
                     const subjectList: Subject[] = (trueSubjectRes?.data ?? []).filter((subject) => isCoreSubject(subject.name))
                     setSubjects(subjectList)
                     setTasks((taskRes?.data ?? taskRes ?? []) as TaskItem[])
+                    setAiAssignments((aiRes ?? []) as AIAssignment[])
 
                     const lessonResults = await Promise.all(
                         subjectList.map(async (subject) => {
@@ -239,14 +257,30 @@ function QuizContent() {
                     return
                 }
 
-                const quizData = await api.quizzes.listByLesson(lessonId)
-                if (!Array.isArray(quizData) || quizData.length === 0) {
-                    setError('Bài học này chưa có câu hỏi.')
-                    return
-                }
+                if (aiDocumentId) {
+                    const playable = await api.aiQuizzes.getPlayable(aiDocumentId)
+                    const quizData = playable.questions
+                    if (!Array.isArray(quizData) || quizData.length === 0) {
+                        setError('Bài AI này chưa có câu hỏi.')
+                        return
+                    }
 
-                setQuizzes(quizData)
-                setAnswers(new Array(quizData.length).fill(null))
+                    setQuizzes(quizData as Quiz[])
+                    setAnswers(new Array(quizData.length).fill(null))
+                } else {
+                    if (!lessonId) {
+                        setError('Thiếu bài học để mở kiểm tra.')
+                        return
+                    }
+                    const quizData = await api.quizzes.listByLesson(lessonId)
+                    if (!Array.isArray(quizData) || quizData.length === 0) {
+                        setError('Bài học này chưa có câu hỏi.')
+                        return
+                    }
+
+                    setQuizzes(quizData)
+                    setAnswers(new Array(quizData.length).fill(null))
+                }
 
                 const task = taskId ? await api.tasks.get(taskId) : null
 
@@ -294,10 +328,12 @@ function QuizContent() {
         }
 
         load()
-    }, [lessonId, supabase, taskId])
+    }, [aiDocumentId, lessonId, supabase, taskId])
+
+    const hasQuizSession = Boolean(lessonId || aiDocumentId)
 
     useEffect(() => {
-        if (!lessonId || loading || finished) return
+        if (!hasQuizSession || loading || finished) return
         const timer = window.setInterval(() => {
             setTotalSecondsRemaining((prev) => {
                 if (prev <= 1) {
@@ -309,19 +345,19 @@ function QuizContent() {
         }, 1000)
 
         return () => window.clearInterval(timer)
-    }, [finished, lessonId, loading])
+    }, [finished, hasQuizSession, loading])
 
     useEffect(() => {
-        if (lessonId && totalSecondsRemaining === 0 && !finished && !loading) {
+        if (hasQuizSession && totalSecondsRemaining === 0 && !finished && !loading) {
             const timer = window.setTimeout(() => {
                 void handleFinish()
             }, 0)
             return () => window.clearTimeout(timer)
         }
-    }, [finished, handleFinish, lessonId, loading, totalSecondsRemaining])
+    }, [finished, handleFinish, hasQuizSession, loading, totalSecondsRemaining])
 
     useEffect(() => {
-        if (!lessonId || loading || finished || phase !== 'quiz' || focusBreakPending) return
+        if (!hasQuizSession || loading || finished || phase !== 'quiz' || focusBreakPending) return
         const timer = window.setInterval(() => {
             setFocusSecondsRemaining((prev) => {
                 if (prev <= 1) {
@@ -334,10 +370,10 @@ function QuizContent() {
         }, 1000)
 
         return () => window.clearInterval(timer)
-    }, [finished, focusBreakPending, lessonId, loading, phase])
+    }, [finished, focusBreakPending, hasQuizSession, loading, phase])
 
     useEffect(() => {
-        if (!lessonId || loading || finished || (phase !== 'break' && phase !== 'game')) return
+        if (!hasQuizSession || loading || finished || (phase !== 'break' && phase !== 'game')) return
         const timer = window.setInterval(() => {
             setPhaseSecondsRemaining((prev) => {
                 if (prev <= 1) {
@@ -349,10 +385,10 @@ function QuizContent() {
         }, 1000)
 
         return () => window.clearInterval(timer)
-    }, [finished, lessonId, loading, phase])
+    }, [finished, hasQuizSession, loading, phase])
 
     useEffect(() => {
-        if (!lessonId || loading || finished || (phase !== 'break' && phase !== 'game') || phaseSecondsRemaining > 0) return
+        if (!hasQuizSession || loading || finished || (phase !== 'break' && phase !== 'game') || phaseSecondsRemaining > 0) return
         const timer = window.setTimeout(() => {
             setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
             setFocusBreakPending(false)
@@ -362,10 +398,10 @@ function QuizContent() {
             setCycleCount((prev) => prev + 1)
         }, 0)
         return () => window.clearTimeout(timer)
-    }, [finished, lessonId, loading, phase, phaseSecondsRemaining])
+    }, [finished, hasQuizSession, loading, phase, phaseSecondsRemaining])
 
     useEffect(() => {
-        if (!lessonId || loading || finished || phase !== 'game') return
+        if (!hasQuizSession || loading || finished || phase !== 'game') return
 
         const onGameComplete = (event: MessageEvent) => {
             const data = event.data as { type?: string } | null
@@ -376,7 +412,7 @@ function QuizContent() {
 
         window.addEventListener('message', onGameComplete)
         return () => window.removeEventListener('message', onGameComplete)
-    }, [finished, lessonId, loading, phase, totalSecondsRemaining])
+    }, [finished, hasQuizSession, loading, phase, totalSecondsRemaining])
 
     const filteredSubjects = useMemo(() => {
         if (!subjectIdFilter) return subjects
@@ -474,8 +510,9 @@ function QuizContent() {
         )
     }
 
-    if (!lessonId) {
+    if (!lessonId && !aiDocumentId) {
         const activeTasks = tasks.filter((task) => task.status !== 'completed')
+        const activeAiAssignments = aiAssignments.filter((assignment) => assignment.status !== 'completed')
 
         return (
             <div className="max-w-6xl mx-auto p-8 space-y-7">
@@ -485,11 +522,11 @@ function QuizContent() {
                     <p className="text-indigo-200 mt-2">Chọn môn, chọn bài và bắt đầu trắc nghiệm với Pomodoro.</p>
                 </div>
 
-                {activeTasks.length > 0 && (
+                {(activeTasks.length > 0 || activeAiAssignments.length > 0) && (
                     <section className="space-y-3">
                         <div className="flex items-center justify-between">
                             <h2 className="text-lg font-black text-gray-800">Bài kiểm tra từ nhiệm vụ</h2>
-                            <span className="text-xs font-black text-indigo-600 bg-indigo-100 px-3 py-1 rounded-full">{activeTasks.length} bài</span>
+                            <span className="text-xs font-black text-indigo-600 bg-indigo-100 px-3 py-1 rounded-full">{activeTasks.length + activeAiAssignments.length} bài</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                             {activeTasks.map((task) => (
@@ -501,6 +538,20 @@ function QuizContent() {
                                     <Link
                                         href={`/child/quiz?taskId=${task.id}&lessonId=${task.lesson_id}&lessonTitle=${encodeURIComponent(task.lessons?.title ?? 'Bài học')}&duration=${task.session_duration_minutes}`}
                                         className="mt-3 inline-flex justify-center w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-black"
+                                    >
+                                        Làm kiểm tra ngay
+                                    </Link>
+                                </div>
+                            ))}
+                            {activeAiAssignments.map((assignment) => (
+                                <div key={assignment.id} className="bg-white rounded-3xl border border-gray-100 p-5 shadow-sm">
+                                    <p className="text-xs font-black uppercase tracking-widest text-amber-500">AI Quiz</p>
+                                    <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{assignment.pdf_documents?.title ?? 'Bài AI'}</h3>
+                                    <p className="text-sm text-gray-500 mt-1 line-clamp-2">Bố mẹ đã giao bài AI này cho bé.</p>
+                                    <p className="mt-3 text-xs font-bold text-gray-500">Pomodoro: {Math.round(POMODORO_TOTAL_SECONDS / 60)} phút</p>
+                                    <Link
+                                        href={`/child/quiz?aiAssignmentId=${assignment.id}&aiDocumentId=${assignment.document_id}&lessonTitle=${encodeURIComponent(assignment.pdf_documents?.title ?? 'Bài AI')}`}
+                                        className="mt-3 inline-flex justify-center w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black"
                                     >
                                         Làm kiểm tra ngay
                                     </Link>
