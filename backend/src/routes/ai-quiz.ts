@@ -15,6 +15,7 @@ type QuestionStatus = 'pending' | 'approved' | 'rejected';
 const uploadSchema = z.object({
     title: z.string().trim().min(1).max(150),
     fileUrl: z.string().url(),
+    lessonId: z.string().uuid().optional(),
 });
 
 const aiQuestionSchema = z.object({
@@ -259,10 +260,74 @@ async function getOwnedQuestion(questionId: string, parentId: string) {
 
     return questionRow;
 }
+async function syncApprovedQuestionToLessonQuiz(questionId: string) {
+    const { data: row, error } = await supabaseAdmin
+        .from('pdf_questions')
+        .select('id, document_id, question, options, correct_index, status, quiz_id, pdf_documents(lesson_id)')
+        .eq('id', questionId)
+        .single();
 
+    if (error || !row) throw new Error(error?.message ?? 'Question not found');
+
+    const documentRef = Array.isArray(row.pdf_documents) ? row.pdf_documents[0] : row.pdf_documents;
+    const lessonId = documentRef?.lesson_id;
+
+    if (!lessonId) return row;
+
+    if (row.status !== 'approved') {
+        if (row.quiz_id) {
+            await supabaseAdmin
+                .from('quizzes')
+                .update({ deleted_at: new Date().toISOString() })
+                .eq('id', row.quiz_id);
+        }
+        return row;
+    }
+
+    if (row.quiz_id) {
+        const { error: updateError } = await supabaseAdmin
+            .from('quizzes')
+            .update({
+                lesson_id: lessonId,
+                question: row.question,
+                options: row.options,
+                correct_index: row.correct_index,
+                source_type: 'ai_pdf',
+                source_pdf_question_id: row.id,
+                deleted_at: null,
+            })
+            .eq('id', row.quiz_id);
+        if (updateError) throw new Error(updateError.message);
+        return row;
+    }
+
+    const { data: createdQuiz, error: insertError } = await supabaseAdmin
+        .from('quizzes')
+        .insert({
+            lesson_id: lessonId,
+            question: row.question,
+            options: row.options,
+            correct_index: row.correct_index,
+            source_type: 'ai_pdf',
+            source_pdf_question_id: row.id,
+        })
+        .select('id')
+        .single();
+
+    if (insertError || !createdQuiz) throw new Error(insertError?.message ?? 'Failed to sync AI question');
+
+    const { error: linkError } = await supabaseAdmin
+        .from('pdf_questions')
+        .update({ quiz_id: createdQuiz.id })
+        .eq('id', row.id);
+
+    if (linkError) throw new Error(linkError.message);
+
+    return { ...row, quiz_id: createdQuiz.id };
+}
 // POST /ai-quiz/upload
 router.post('/upload', authenticate, requireRole('parent'), validate(uploadSchema), async (req, res) => {
-    const { title, fileUrl } = req.body;
+    const { title, fileUrl, lessonId } = req.body;
     const parentId = req.user!.id;
 
     if (!isAllowedFileUrl(fileUrl)) {
@@ -271,7 +336,7 @@ router.post('/upload', authenticate, requireRole('parent'), validate(uploadSchem
     }
 
     const { data: doc, error: docError } = await supabaseAdmin.from('pdf_documents')
-        .insert({ parent_id: parentId, title, file_url: fileUrl, status: 'processing' })
+        .insert({ parent_id: parentId, lesson_id: lessonId ?? null, title, file_url: fileUrl, status: 'processing' })
         .select().single();
 
     if (docError || !doc) {
@@ -395,6 +460,15 @@ router.post('/documents/:id/questions', authenticate, requireRole('parent'), val
         return;
     }
 
+    if (data.status === 'approved') {
+        try {
+            await syncApprovedQuestionToLessonQuiz(data.id);
+        } catch (syncError) {
+            res.status(500).json({ error: syncError instanceof Error ? syncError.message : 'Failed to sync lesson quiz' });
+            return;
+        }
+    }
+
     res.status(201).json(data);
 });
 
@@ -418,6 +492,14 @@ router.put('/questions/:id/status', authenticate, requireRole('parent'), validat
         res.status(500).json({ error: error.message });
         return;
     }
+
+    try {
+        await syncApprovedQuestionToLessonQuiz(questionId);
+    } catch (syncError) {
+        res.status(500).json({ error: syncError instanceof Error ? syncError.message : 'Failed to sync lesson quiz' });
+        return;
+    }
+
     res.json(data);
 });
 
@@ -457,6 +539,13 @@ router.put('/questions/:id', authenticate, requireRole('parent'), validate(updat
         return;
     }
 
+    try {
+        await syncApprovedQuestionToLessonQuiz(questionId);
+    } catch (syncError) {
+        res.status(500).json({ error: syncError instanceof Error ? syncError.message : 'Failed to sync lesson quiz' });
+        return;
+    }
+
     res.json(data);
 });
 
@@ -468,6 +557,23 @@ router.delete('/questions/:id', authenticate, requireRole('parent'), async (req,
     if (!ownedQuestion) {
         res.status(404).json({ error: 'Question not found or no permission' });
         return;
+    }
+
+    const { data: questionToDelete } = await supabaseAdmin
+        .from('pdf_questions')
+        .select('quiz_id')
+        .eq('id', questionId)
+        .maybeSingle();
+
+    if (questionToDelete?.quiz_id) {
+        const { error: quizError } = await supabaseAdmin
+            .from('quizzes')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('id', questionToDelete.quiz_id);
+        if (quizError) {
+            res.status(500).json({ error: quizError.message });
+            return;
+        }
     }
 
     const { error } = await supabaseAdmin.from('pdf_questions').delete().eq('id', questionId);
@@ -565,7 +671,4 @@ router.get('/documents/:id/playable', authenticate, requireRole('child', 'parent
 });
 
 export default router;
-
-
-
 

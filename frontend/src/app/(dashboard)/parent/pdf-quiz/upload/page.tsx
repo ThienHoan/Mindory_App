@@ -1,19 +1,48 @@
-﻿'use client'
+'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Upload, ArrowLeft, FileText, Loader2, AlertCircle } from 'lucide-react'
-import { api } from '@/lib/api-client'
+import { api, Lesson } from '@/lib/api-client'
 import { createClient } from '@/lib/supabase/client'
 
 export default function UploadPDFPage() {
     const [file, setFile] = useState<File | null>(null)
     const [title, setTitle] = useState('')
+    const [lessons, setLessons] = useState<Lesson[]>([])
+    const [lessonId, setLessonId] = useState('')
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const router = useRouter()
     const supabase = createClient()
+
+    useEffect(() => {
+        let active = true
+
+        async function loadLessons() {
+            try {
+                const result = await api.lessons.list()
+                if (!active) return
+                const nextLessons = result.data ?? []
+                setLessons(nextLessons)
+
+                const initialLessonId = new URLSearchParams(window.location.search).get('lessonId')
+                if (initialLessonId && nextLessons.some((lesson) => lesson.id === initialLessonId)) {
+                    setLessonId(initialLessonId)
+                    const lesson = nextLessons.find((item) => item.id === initialLessonId)
+                    if (lesson) setTitle((current) => current || lesson.title)
+                }
+            } catch (err) {
+                console.error('Failed to load lessons:', err)
+            }
+        }
+
+        void loadLessons()
+        return () => {
+            active = false
+        }
+    }, [])
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -76,11 +105,11 @@ export default function UploadPDFPage() {
                 throw new Error(`Signed URL error: ${signedError?.message || 'Cannot create signed URL'}`)
             }
 
-            await api.aiQuizzes.upload(title, signedData.signedUrl)
+            await api.aiQuizzes.upload(title, signedData.signedUrl, lessonId || undefined)
             router.push('/parent/pdf-quiz')
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Upload process failed:', err)
-            setError(err.message || 'Có lỗi xảy ra trong quá trình tải lên.')
+            setError(err instanceof Error ? err.message : 'Có lỗi xảy ra trong quá trình tải lên.')
             setLoading(false)
         }
     }
@@ -106,6 +135,26 @@ export default function UploadPDFPage() {
                             className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                             disabled={loading}
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Gắn với bài học</label>
+                        <select
+                            value={lessonId}
+                            onChange={(e) => setLessonId(e.target.value)}
+                            className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
+                            disabled={loading}
+                        >
+                            <option value="">Không gắn với bài học, chỉ tạo quiz riêng</option>
+                            {lessons.map((lesson) => (
+                                <option key={lesson.id} value={lesson.id}>
+                                    {lesson.subjects?.name ? `${lesson.subjects.name} - ` : ''}{lesson.title}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="mt-2 text-xs text-slate-500">
+                            Nếu gắn với bài học, chỉ câu hỏi đã duyệt mới được đồng bộ vào quiz chính của bài học.
+                        </p>
                     </div>
 
                     <div>

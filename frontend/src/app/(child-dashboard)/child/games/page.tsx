@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { cn } from '@/lib/utils'
@@ -1529,7 +1529,7 @@ function getSubNodePosition(total: number, index: number) {
     return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
 }
 
-export default function ChildGamesPage() {
+function ChildGamesContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const supabase = useMemo(() => createClient(), [])
@@ -1804,5 +1804,13 @@ export default function ChildGamesPage() {
                 ) : null}
             </div>
         </div>
+    )
+}
+
+export default function ChildGamesPage() {
+    return (
+        <Suspense fallback={null}>
+            <ChildGamesContent />
+        </Suspense>
     )
 }

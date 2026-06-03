@@ -1,9 +1,9 @@
-﻿'use client'
+'use client'
 
-import { useEffect, useState, use } from 'react'
+import { useCallback, useEffect, useState, use } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, CheckCircle, XCircle, Play, Share2, Pencil, Trash2, Plus, Save } from 'lucide-react'
-import { api } from '@/lib/api-client'
+import { AIQuizDocument, AIQuizQuestion, api } from '@/lib/api-client'
 
 type QuestionStatus = 'pending' | 'approved' | 'rejected'
 
@@ -23,7 +23,7 @@ function makeEmptyDraft(): QuestionDraft {
     }
 }
 
-function toDraft(question: any): QuestionDraft {
+function toDraft(question: AIQuizQuestion): QuestionDraft {
     return {
         question: question?.question ?? '',
         options: Array.isArray(question?.options) ? [...question.options] : ['', '', '', ''],
@@ -42,8 +42,8 @@ function validateDraft(draft: QuestionDraft) {
 
 export default function ReviewQuizPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params)
-    const [document, setDocument] = useState<any>(null)
-    const [questions, setQuestions] = useState<any[]>([])
+    const [document, setDocument] = useState<AIQuizDocument | null>(null)
+    const [questions, setQuestions] = useState<AIQuizQuestion[]>([])
     const [loading, setLoading] = useState(true)
     const [copied, setCopied] = useState(false)
 
@@ -52,11 +52,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editDraft, setEditDraft] = useState<QuestionDraft>(makeEmptyDraft())
 
-    useEffect(() => {
-        loadData()
-    }, [id])
-
-    const loadData = async () => {
+    const loadData = useCallback(async () => {
         try {
             const [doc, qs] = await Promise.all([
                 api.aiQuizzes.getDocument(id),
@@ -69,8 +65,12 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
         } finally {
             setLoading(false)
         }
-    }
+    }, [id])
 
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void loadData()
+    }, [loadData])
     const handleStatusChange = async (questionId: string, status: QuestionStatus) => {
         try {
             await api.aiQuizzes.updateQuestionStatus(questionId, status)
@@ -128,7 +128,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
         }
     }
 
-    const startEdit = (question: any) => {
+    const startEdit = (question: AIQuizQuestion) => {
         setEditingId(question.id)
         setEditDraft(toDraft(question))
     }
@@ -177,7 +177,10 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     }
 
     const approvedCount = questions.filter((q) => q.status === 'approved').length
-    const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}/child/pdf-quiz/${id}` : ''
+    const childQuizPath = document?.lesson_id
+        ? `/child/quiz?lessonId=${document.lesson_id}&lessonTitle=${encodeURIComponent(document.title ?? 'Bài học')}`
+        : `/child/pdf-quiz/${id}`
+    const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}${childQuizPath}` : ''
 
     const handleCopy = () => {
         if (shareUrl) {
@@ -211,7 +214,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                 <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl p-6 border border-indigo-100 flex flex-col md:flex-row items-center justify-between gap-4">
                     <div>
                         <h3 className="font-semibold text-indigo-900 mb-1">Đã sẵn sàng cho bé!</h3>
-                        <p className="text-indigo-700/80 text-sm">Bạn đã duyệt {approvedCount} câu hỏi. Gửi link này cho bé để bắt đầu.</p>
+                        <p className="text-indigo-700/80 text-sm">Bạn đã duyệt {approvedCount} câu hỏi. {document.lesson_id ? 'Bé sẽ làm trong luồng quiz bài học.' : 'Gửi link này cho bé để bắt đầu.'}</p>
                     </div>
                     <div className="flex gap-2 w-full md:w-auto">
                         <button
@@ -222,7 +225,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                             {copied ? 'Đã copy!' : 'Copy Link'}
                         </button>
                         <Link
-                            href={`/child/pdf-quiz/${id}`}
+                            href={childQuizPath}
                             className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium transition-colors"
                         >
                             <Play className="w-4 h-4" />

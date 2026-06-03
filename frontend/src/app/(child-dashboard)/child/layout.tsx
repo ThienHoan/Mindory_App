@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
@@ -11,24 +11,6 @@ interface ChildProfile {
     avatar_url: string | null
     xp: number | null
     full_name: string | null
-}
-
-interface BreakMathQuestion {
-    left: number
-    right: number
-    answer: number
-}
-
-const BREAK_INTERVAL_MINUTES = 5
-
-function createBreakMathQuestion(): BreakMathQuestion {
-    const left = 15 + Math.floor(Math.random() * 75)
-    const right = 6 + Math.floor(Math.random() * 30)
-    return {
-        left,
-        right,
-        answer: left + right,
-    }
 }
 
 const navigation = [
@@ -82,18 +64,12 @@ const navigation = [
 
 export default function ChildLayout({ children }: { children: React.ReactNode }) {
     const pathname = usePathname()
-    const searchParams = useSearchParams()
     const router = useRouter()
     const supabase = createClient()
     const [profile, setProfile] = useState<ChildProfile | null>(null)
     const [xp, setXp] = useState(0)
-    const [breakPopupOpen, setBreakPopupOpen] = useState(false)
-    const [breakRound, setBreakRound] = useState(0)
-    const [breakQuestion, setBreakQuestion] = useState<BreakMathQuestion>(() => createBreakMathQuestion())
-    const [breakAnswer, setBreakAnswer] = useState('')
-    const [breakError, setBreakError] = useState('')
     const isMiniPianoRoute = pathname?.startsWith('/child/games/mini-piano')
-    const isEmbeddedGameView = pathname?.startsWith('/child/games') && searchParams.get('embed') === '1'
+    const isEmbeddedGameView = pathname?.startsWith('/child/games') && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('embed') === '1'
 
     useEffect(() => {
         if (isEmbeddedGameView) return
@@ -108,39 +84,10 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
         getProfile()
     }, [isEmbeddedGameView, supabase])
 
-    useEffect(() => {
-        if (isEmbeddedGameView) return
-        if (breakPopupOpen) return
-        const timer = window.setTimeout(() => {
-            const nextQuestion = createBreakMathQuestion()
-            setBreakQuestion(nextQuestion)
-            setBreakAnswer('')
-            setBreakError('')
-            setBreakPopupOpen(true)
-        }, BREAK_INTERVAL_MINUTES * 60 * 1000)
-        return () => window.clearTimeout(timer)
-    }, [breakPopupOpen, breakRound, isEmbeddedGameView, pathname])
-
     const handleSignOut = async () => {
         await supabase.auth.signOut()
         router.push('/login')
         router.refresh()
-    }
-
-    const handleBreakSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-        event.preventDefault()
-        const parsed = Number(breakAnswer)
-        if (!Number.isFinite(parsed)) return
-
-        if (parsed === breakQuestion.answer) {
-            setBreakPopupOpen(false)
-            setBreakAnswer('')
-            setBreakError('')
-            setBreakRound((prev) => prev + 1)
-            return
-        }
-
-        setBreakError('Đáp án chưa đúng, bé thử hỏi ba mẹ và nhập lại nhé!')
     }
 
     if (isEmbeddedGameView) {
@@ -262,59 +209,6 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
                 </main>
             </div>
         </div>
-        {breakPopupOpen ? (
-            <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
-                <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl">
-                    <div className="flex flex-col items-center">
-                        <div className="mb-4 flex justify-center">
-                            <Image
-                                src="https://assets.cuthongminh.com/games/common/owl-say-hi.webp"
-                                alt="Cú Thông Minh"
-                                width={90}
-                                height={90}
-                                className="object-contain drop-shadow-lg"
-                            />
-                        </div>
-                        <h2 className="mb-1 text-center text-2xl font-black text-purple-600">⏰ Nghỉ giải lao nhé!</h2>
-                        <p className="mb-6 text-center text-sm font-medium text-gray-500">
-                            Bé hãy hỏi ba mẹ trả lời câu hỏi dưới đây để chơi tiếp nha!
-                        </p>
-
-                        <div className="mb-6 w-full rounded-2xl bg-purple-50 px-6 py-5 text-center">
-                            <p className="text-4xl font-black tracking-wide text-purple-700">
-                                {breakQuestion.left} + {breakQuestion.right} = ?
-                            </p>
-                        </div>
-
-                        <form className="flex w-full flex-col gap-3" onSubmit={handleBreakSubmit}>
-                            <input
-                                type="number"
-                                inputMode="numeric"
-                                value={breakAnswer}
-                                onChange={(event) => {
-                                    setBreakAnswer(event.target.value)
-                                    if (breakError) setBreakError('')
-                                }}
-                                placeholder="Nhập đáp án"
-                                className="w-full rounded-xl border-2 border-gray-200 py-4 text-center text-2xl font-bold text-gray-700 transition-all focus:border-purple-400 focus:outline-none focus:ring-4 focus:ring-purple-100"
-                            />
-
-                            {breakError ? (
-                                <p className="text-center text-xs font-bold text-red-500">{breakError}</p>
-                            ) : null}
-
-                            <button
-                                type="submit"
-                                disabled={breakAnswer.trim().length === 0}
-                                className="mt-1 h-16 w-full rounded-full bg-gradient-to-b from-purple-400 to-purple-600 px-12 py-4 text-xl font-extrabold uppercase tracking-wider text-white shadow-lg transition-all duration-150 hover:-translate-y-0.5 hover:brightness-105 hover:shadow-xl active:translate-y-1 active:brightness-95 disabled:opacity-50"
-                            >
-                                Xác nhận
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        ) : null}
         </>
     )
 }

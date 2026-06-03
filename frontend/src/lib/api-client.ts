@@ -20,6 +20,7 @@ export interface Lesson {
     title: string
     description: string
     pdf_url: string
+    pdf_path?: string | null
     total_pages: number
     subjects?: { name: string; grade: number } | null
 }
@@ -43,9 +44,44 @@ export interface Task {
         title: string
         description: string
         pdf_url: string
+        pdf_path?: string | null
         total_pages: number
         subjects?: { name: string } | null
     } | null
+}
+
+export interface LessonPdfUrlResult {
+    url: string
+    source: 'storage' | 'legacy-url'
+    expiresIn: number | null
+}
+
+export type AIQuizQuestionStatus = 'pending' | 'approved' | 'rejected'
+
+export interface AIQuizDocument {
+    id: string
+    parent_id: string
+    lesson_id?: string | null
+    title: string
+    file_url: string
+    status: 'processing' | 'completed' | 'error'
+    created_at: string
+}
+
+export interface AIQuizQuestion {
+    id: string
+    document_id: string
+    quiz_id?: string | null
+    question: string
+    options: string[]
+    correct_index: number
+    status: AIQuizQuestionStatus
+    created_at?: string
+}
+
+export interface AIQuizPlayable {
+    document: Pick<AIQuizDocument, 'id' | 'title'> | null
+    questions: Pick<AIQuizQuestion, 'id' | 'question' | 'options' | 'correct_index'>[]
 }
 
 export interface SessionStartResult {
@@ -266,6 +302,10 @@ export const api = {
             const raw = await requestJson<unknown>(`/lessons/${encodeURIComponent(id)}`, undefined, { cacheMs: 10000 })
             return normalizeObjectResponse<Lesson>(raw)
         },
+        getPdfUrl: async (id: string): Promise<LessonPdfUrlResult> => {
+            const raw = await requestJson<unknown>(`/lessons/${encodeURIComponent(id)}/pdf-url`, undefined, { cacheMs: 60000 })
+            return normalizeObjectResponse<LessonPdfUrlResult>(raw)
+        },
         listBySubject: async (subjectId: string): Promise<ApiListResponse<Lesson>> => {
             const raw = await requestJson<unknown>(`/lessons?subjectId=${encodeURIComponent(subjectId)}`, undefined, { cacheMs: 10000 })
             return normalizeListResponse<Lesson>(raw)
@@ -293,53 +333,59 @@ export const api = {
         },
     },
     aiQuizzes: {
-        upload: async (title: string, fileUrl: string): Promise<{ documentId: string }> => {
+        upload: async (title: string, fileUrl: string, lessonId?: string): Promise<{ documentId: string }> => {
             const raw = await requestJson<unknown>('/ai-quiz/upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, fileUrl }),
+                body: JSON.stringify({ title, fileUrl, ...(lessonId ? { lessonId } : {}) }),
             })
             return normalizeObjectResponse<{ documentId: string }>(raw)
         },
-        listDocuments: async (): Promise<any[]> => {
+        listDocuments: async (): Promise<AIQuizDocument[]> => {
             const raw = await requestJson<unknown>('/ai-quiz/documents')
-            if (Array.isArray(raw)) return raw
-            return (raw as any)?.data || []
+            if (Array.isArray(raw)) return raw as AIQuizDocument[]
+            if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+                return (raw as { data: AIQuizDocument[] }).data
+            }
+            return []
         },
-        getDocument: async (id: string): Promise<any> => {
+        getDocument: async (id: string): Promise<AIQuizDocument> => {
             const raw = await requestJson<unknown>(`/ai-quiz/documents/${id}`)
-            return normalizeObjectResponse<any>(raw)
+            return normalizeObjectResponse<AIQuizDocument>(raw)
         },
-        listQuestions: async (documentId: string): Promise<any[]> => {
+        listQuestions: async (documentId: string): Promise<AIQuizQuestion[]> => {
             const raw = await requestJson<unknown>(`/ai-quiz/documents/${documentId}/questions`)
-            if (Array.isArray(raw)) return raw
-            return (raw as any)?.data || []
+            if (Array.isArray(raw)) return raw as AIQuizQuestion[]
+            if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+                return (raw as { data: AIQuizQuestion[] }).data
+            }
+            return []
         },
         createQuestion: async (documentId: string, payload: {
             question: string
             options: string[]
             correctIndex: number
-            status?: 'pending' | 'approved' | 'rejected'
-        }): Promise<any> => {
+            status?: AIQuizQuestionStatus
+        }): Promise<AIQuizQuestion> => {
             const raw = await requestJson<unknown>(`/ai-quiz/documents/${documentId}/questions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             })
-            return normalizeObjectResponse<any>(raw)
+            return normalizeObjectResponse<AIQuizQuestion>(raw)
         },
         updateQuestion: async (questionId: string, payload: {
             question: string
             options: string[]
             correctIndex: number
-            status?: 'pending' | 'approved' | 'rejected'
-        }): Promise<any> => {
+            status?: AIQuizQuestionStatus
+        }): Promise<AIQuizQuestion> => {
             const raw = await requestJson<unknown>(`/ai-quiz/questions/${questionId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             })
-            return normalizeObjectResponse<any>(raw)
+            return normalizeObjectResponse<AIQuizQuestion>(raw)
         },
         deleteQuestion: async (questionId: string): Promise<{ success: boolean }> => {
             const raw = await requestJson<unknown>(`/ai-quiz/questions/${questionId}`, {
@@ -347,23 +393,22 @@ export const api = {
             })
             return normalizeObjectResponse<{ success: boolean }>(raw)
         },
-        getPlayable: async (documentId: string): Promise<{ document: any; questions: any[] }> => {
+        getPlayable: async (documentId: string): Promise<AIQuizPlayable> => {
             const raw = await requestJson<unknown>(`/ai-quiz/documents/${documentId}/playable`)
-            const data = normalizeObjectResponse<{ document: any; questions: any[] }>(raw)
+            const data = normalizeObjectResponse<AIQuizPlayable>(raw)
             return {
                 document: data?.document ?? null,
                 questions: Array.isArray(data?.questions) ? data.questions : []
             }
         },
-        updateQuestionStatus: async (id: string, status: 'approved' | 'rejected' | 'pending'): Promise<any> => {
+        updateQuestionStatus: async (id: string, status: AIQuizQuestionStatus): Promise<AIQuizQuestion> => {
             const raw = await requestJson<unknown>(`/ai-quiz/questions/${id}/status`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status }),
             })
-            return normalizeObjectResponse<any>(raw)
+            return normalizeObjectResponse<AIQuizQuestion>(raw)
         }
     }
 }
-
 

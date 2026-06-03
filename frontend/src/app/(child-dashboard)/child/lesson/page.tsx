@@ -79,6 +79,7 @@ function LessonContent() {
                             title: task.lessons.title,
                             description: task.lessons.description,
                             pdf_url: task.lessons.pdf_url,
+                            pdf_path: task.lessons.pdf_path,
                             total_pages: task.lessons.total_pages,
                             subject_id: '',
                         }
@@ -315,15 +316,17 @@ function LessonContent() {
                     </div>
 
                     {detailLesson.pdf_url && (
-                        <a
-                            href={detailLesson.pdf_url}
-                            target="_blank"
-                            rel="noreferrer"
+                        <Link
+                            href={
+                                detailSource === 'task' && detailTask
+                                    ? `/child/lesson/study?taskId=${detailTask.id}`
+                                    : `/child/lesson/study?lessonId=${detailLesson.id}`
+                            }
                             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-50 text-blue-700 font-black text-sm hover:bg-blue-100 transition-colors"
                         >
                             <span>📄</span>
-                            Xem tài liệu PDF
-                        </a>
+                            Vào phòng học PDF
+                        </Link>
                     )}
                 </div>
 

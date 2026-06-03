@@ -6,20 +6,23 @@ import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/requireRole';
 
 const router = Router();
+const LESSON_PDF_BUCKET = 'lesson-pdfs';
 
 const createLessonSchema = z.object({
     subjectId: z.string().uuid(),
     title: z.string().min(1).max(200),
     description: z.string().max(1000).optional(),
-    pdfUrl: z.string().url(),
+    pdfUrl: z.string().url().optional(),
+    pdfPath: z.string().min(1).max(500).optional(),
     totalPages: z.number().int().min(1).optional().default(1),
-});
+}).refine(d => d.pdfUrl || d.pdfPath, { message: 'PDF URL or PDF path required' });
 const updateLessonSchema = z.object({
     title: z.string().min(1).max(200).optional(),
     description: z.string().max(1000).optional(),
     pdfUrl: z.string().url().optional(),
+    pdfPath: z.string().min(1).max(500).nullable().optional(),
     totalPages: z.number().int().min(1).optional(),
-}).refine(d => d.title || d.description || d.pdfUrl || d.totalPages, { message: 'At least one field required' });
+}).refine(d => d.title || d.description || d.pdfUrl || d.pdfPath !== undefined || d.totalPages, { message: 'At least one field required' });
 
 // GET /lessons?subjectId=... — Public (used by Child/Parent)
 router.get('/', async (req, res) => {
@@ -44,7 +47,7 @@ router.get('/admin/list', authenticate, requireRole('admin'), async (req, res) =
 
     let query = supabaseAdmin
         .from('lessons')
-        .select('id, subject_id, title, description, pdf_url, total_pages, created_at, deleted_at, subjects(name, grade)', { count: 'exact' })
+        .select('id, subject_id, title, description, pdf_url, pdf_path, total_pages, created_at, deleted_at, subjects(name, grade)', { count: 'exact' })
         .order('created_at');
     if (subjectId) query = query.eq('subject_id', String(subjectId));
 
@@ -53,6 +56,43 @@ router.get('/admin/list', authenticate, requireRole('admin'), async (req, res) =
     res.json({ data, total: count });
 });
 
+// GET /lessons/:id/pdf-url - Authenticated PDF URL for in-app study viewer
+router.get('/:id/pdf-url', authenticate, async (req, res) => {
+    const { data: lesson, error } = await supabaseAdmin
+        .from('lessons')
+        .select('id, pdf_url, pdf_path')
+        .eq('id', req.params.id)
+        .is('deleted_at', null)
+        .single();
+
+    if (error || !lesson) {
+        res.status(404).json({ error: 'Lesson not found' });
+        return;
+    }
+
+    const pdfPath = typeof lesson.pdf_path === 'string' ? lesson.pdf_path.trim() : '';
+    if (pdfPath) {
+        const expiresIn = 60 * 60;
+        const { data, error: signError } = await supabaseAdmin.storage
+            .from(LESSON_PDF_BUCKET)
+            .createSignedUrl(pdfPath, expiresIn);
+
+        if (signError || !data?.signedUrl) {
+            res.status(500).json({ error: signError?.message ?? 'Could not create signed PDF URL' });
+            return;
+        }
+
+        res.json({ url: data.signedUrl, source: 'storage', expiresIn });
+        return;
+    }
+
+    if (lesson.pdf_url) {
+        res.json({ url: lesson.pdf_url, source: 'legacy-url', expiresIn: null });
+        return;
+    }
+
+    res.status(404).json({ error: 'Lesson PDF not found' });
+});
 
 // GET /lessons/:id
 router.get('/:id', async (req, res) => {
@@ -64,9 +104,9 @@ router.get('/:id', async (req, res) => {
 
 // POST /lessons — Admin
 router.post('/', authenticate, requireRole('admin'), validate(createLessonSchema), async (req, res) => {
-    const { subjectId, title, description, pdfUrl, totalPages } = req.body;
+    const { subjectId, title, description, pdfUrl, pdfPath, totalPages } = req.body;
     const { data, error } = await supabaseAdmin.from('lessons')
-        .insert({ subject_id: subjectId, title, description, pdf_url: pdfUrl, total_pages: totalPages })
+        .insert({ subject_id: subjectId, title, description, pdf_url: pdfUrl ?? `storage:${pdfPath}`, pdf_path: pdfPath ?? null, total_pages: totalPages })
         .select().single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.status(201).json(data);
@@ -82,6 +122,10 @@ router.put('/:id', authenticate, requireRole('admin'), validate(updateLessonSche
     if (req.body.title) payload.title = req.body.title;
     if (req.body.description !== undefined) payload.description = req.body.description;
     if (req.body.pdfUrl) payload.pdf_url = req.body.pdfUrl;
+    if (req.body.pdfPath !== undefined) {
+        payload.pdf_path = req.body.pdfPath || null;
+        if (!req.body.pdfUrl && req.body.pdfPath) payload.pdf_url = `storage:${req.body.pdfPath}`;
+    }
     if (req.body.totalPages) payload.total_pages = req.body.totalPages;
 
     const { data, error } = await supabaseAdmin.from('lessons').update(payload)

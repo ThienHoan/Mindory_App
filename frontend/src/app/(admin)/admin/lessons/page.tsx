@@ -9,7 +9,7 @@ const API = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:4000'
 type Subject = { id: string; name: string; grade: number }
 type Lesson = {
     id: string; subject_id: string; title: string; description: string | null
-    pdf_url: string; total_pages: number; created_at: string; deleted_at: string | null
+    pdf_url: string; pdf_path: string | null; total_pages: number; created_at: string; deleted_at: string | null
     subjects: { name: string; grade: number }
 }
 
@@ -37,7 +37,7 @@ export default function AdminLessonsPage() {
 
     const [modalOpen, setModalOpen] = useState(false)
     const [editing, setEditing] = useState<Lesson | null>(null)
-    const [form, setForm] = useState({ subjectId: '', title: '', description: '', pdfUrl: '', totalPages: 1 })
+    const [form, setForm] = useState({ subjectId: '', title: '', description: '', pdfUrl: '', pdfPath: '', totalPages: 1 })
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
 
@@ -67,27 +67,27 @@ export default function AdminLessonsPage() {
 
     function openCreate() {
         setEditing(null)
-        setForm({ subjectId: subjects[0]?.id ?? '', title: '', description: '', pdfUrl: '', totalPages: 1 })
+        setForm({ subjectId: subjects[0]?.id ?? '', title: '', description: '', pdfUrl: '', pdfPath: '', totalPages: 1 })
         setError('')
         setModalOpen(true)
     }
 
     function openEdit(l: Lesson) {
         setEditing(l)
-        setForm({ subjectId: l.subject_id, title: l.title, description: l.description ?? '', pdfUrl: l.pdf_url, totalPages: l.total_pages })
+        setForm({ subjectId: l.subject_id, title: l.title, description: l.description ?? '', pdfUrl: l.pdf_url.startsWith('storage:') ? '' : l.pdf_url, pdfPath: l.pdf_path ?? '', totalPages: l.total_pages })
         setError('')
         setModalOpen(true)
     }
 
     async function handleSave() {
         if (!form.title.trim()) { setError('Tiêu đề không được để trống'); return }
-        if (!form.pdfUrl.trim()) { setError('PDF URL không được để trống'); return }
+        if (!form.pdfUrl.trim() && !form.pdfPath.trim()) { setError('Nhập PDF URL hoặc PDF path trong bucket'); return }
         setSaving(true); setError('')
         try {
             if (editing) {
-                await apiFetch(`/lessons/${editing.id}`, { method: 'PUT', body: JSON.stringify({ title: form.title, description: form.description, pdfUrl: form.pdfUrl, totalPages: form.totalPages }) })
+                await apiFetch(`/lessons/${editing.id}`, { method: 'PUT', body: JSON.stringify({ title: form.title, description: form.description, pdfUrl: form.pdfUrl || undefined, pdfPath: form.pdfPath || null, totalPages: form.totalPages }) })
             } else {
-                await apiFetch('/lessons', { method: 'POST', body: JSON.stringify({ subjectId: form.subjectId, title: form.title, description: form.description || undefined, pdfUrl: form.pdfUrl, totalPages: form.totalPages }) })
+                await apiFetch('/lessons', { method: 'POST', body: JSON.stringify({ subjectId: form.subjectId, title: form.title, description: form.description || undefined, pdfUrl: form.pdfUrl || undefined, pdfPath: form.pdfPath || undefined, totalPages: form.totalPages }) })
             }
             setModalOpen(false)
             await load()
@@ -155,10 +155,14 @@ export default function AdminLessonsPage() {
                                     <td className="px-6 py-4 text-sm text-gray-600">{l.subjects?.name} (Lớp {l.subjects?.grade})</td>
                                     <td className="px-6 py-4 text-sm text-gray-600">{l.total_pages}</td>
                                     <td className="px-6 py-4 text-sm">
-                                        <a href={l.pdf_url} target="_blank" rel="noreferrer"
-                                            className="text-indigo-600 hover:underline truncate block max-w-[180px]">
-                                            {l.pdf_url}
-                                        </a>
+                                        {l.pdf_path ? (
+                                            <span className="block max-w-[180px] truncate text-emerald-600">{l.pdf_path}</span>
+                                        ) : (
+                                            <a href={l.pdf_url} target="_blank" rel="noreferrer"
+                                                className="text-indigo-600 hover:underline truncate block max-w-[180px]">
+                                                {l.pdf_url}
+                                            </a>
+                                        )}
                                     </td>
                                     <td className="px-6 py-4 text-right">
                                         <div className="flex justify-end gap-2">
@@ -205,11 +209,19 @@ export default function AdminLessonsPage() {
                                     className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">PDF URL *</label>
+                                <label className="block text-sm font-medium text-gray-700">PDF URL ngoài</label>
                                 <input id="input-lesson-pdf" type="url" value={form.pdfUrl}
                                     onChange={e => setForm(f => ({ ...f, pdfUrl: e.target.value }))}
                                     placeholder="https://..."
                                     className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">PDF path trong bucket lesson-pdfs</label>
+                                <input type="text" value={form.pdfPath}
+                                    onChange={e => setForm(f => ({ ...f, pdfPath: e.target.value }))}
+                                    placeholder="grade-1/math/lesson-id.pdf"
+                                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                                <p className="mt-1 text-xs text-gray-400">Ưu tiên dùng path này để backend tạo signed URL riêng cho học sinh.</p>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">Số trang</label>

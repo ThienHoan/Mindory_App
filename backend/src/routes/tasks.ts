@@ -59,7 +59,7 @@ router.get('/mine', async (req, res) => {
     const { from, to } = getPagination(req.query);
     const { data, error, count } = await supabaseAdmin
         .from('assigned_tasks')
-        .select('*, lessons(title, description, pdf_url, total_pages)', { count: 'exact' })
+        .select('*, lessons(title, description, pdf_url, pdf_path, total_pages)', { count: 'exact' })
         .eq('child_id', String(childId)).is('deleted_at', null)
         .order('assigned_date', { ascending: false }).range(from, to);
     if (error) { res.status(500).json({ error: error.message }); return; }
@@ -70,7 +70,7 @@ router.get('/mine', async (req, res) => {
 router.get('/:id', async (req, res) => {
     const { data, error } = await supabaseAdmin
         .from('assigned_tasks')
-        .select('*, lessons(id, title, description, pdf_url, total_pages), profiles!assigned_tasks_child_id_fkey(id, full_name)')
+        .select('*, lessons(id, title, description, pdf_url, pdf_path, total_pages), profiles!assigned_tasks_child_id_fkey(id, full_name)')
         .eq('id', req.params.id).is('deleted_at', null).single();
     if (error || !data) { res.status(404).json({ error: 'Task not found' }); return; }
     res.json(data);

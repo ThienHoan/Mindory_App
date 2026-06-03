@@ -22,10 +22,11 @@ function isCoreSubject(name: string) {
 
 const ACTIVE_SESSION_PREFIX = 'mindory:active-session:'
 
-type PomodoroPhase = 'quiz' | 'game' | 'break'
+type PomodoroPhase = 'quiz' | 'choice' | 'game' | 'break'
 
 const POMODORO_TOTAL_SECONDS = 10 * 60
-const QUESTIONS_PER_GAME = 2
+const FOCUS_INTERVAL_SECONDS = 5 * 60
+const GAME_PHASE_SECONDS = 60
 const BREAK_PHASE_SECONDS = 30
 const RANDOM_GAME_VIEWS = ['memory', 'maze', 'music'] as const
 
@@ -144,10 +145,11 @@ function QuizContent() {
     const [sessionId, setSessionId] = useState<string | null>(null)
     const [sessionTotalSeconds, setSessionTotalSeconds] = useState(POMODORO_TOTAL_SECONDS)
     const [totalSecondsRemaining, setTotalSecondsRemaining] = useState(POMODORO_TOTAL_SECONDS)
+    const [focusSecondsRemaining, setFocusSecondsRemaining] = useState(FOCUS_INTERVAL_SECONDS)
+    const [focusBreakPending, setFocusBreakPending] = useState(false)
     const [phase, setPhase] = useState<PomodoroPhase>('quiz')
     const [phaseSecondsRemaining, setPhaseSecondsRemaining] = useState(0)
     const [cycleCount, setCycleCount] = useState(1)
-    const [answeredSinceGame, setAnsweredSinceGame] = useState(0)
     const [gameView, setGameView] = useState<(typeof RANDOM_GAME_VIEWS)[number]>(() => pickRandomGameView())
     const [gameSeed, setGameSeed] = useState(() => Date.now())
 
@@ -250,10 +252,11 @@ function QuizContent() {
 
                 setSessionTotalSeconds(POMODORO_TOTAL_SECONDS)
                 setTotalSecondsRemaining(POMODORO_TOTAL_SECONDS)
+                setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
+                setFocusBreakPending(false)
                 setPhase('quiz')
                 setPhaseSecondsRemaining(0)
                 setCycleCount(1)
-                setAnsweredSinceGame(0)
                 setGameView(pickRandomGameView())
                 setGameSeed(Date.now())
 
@@ -310,12 +313,31 @@ function QuizContent() {
 
     useEffect(() => {
         if (lessonId && totalSecondsRemaining === 0 && !finished && !loading) {
-            void handleFinish()
+            const timer = window.setTimeout(() => {
+                void handleFinish()
+            }, 0)
+            return () => window.clearTimeout(timer)
         }
     }, [finished, handleFinish, lessonId, loading, totalSecondsRemaining])
 
     useEffect(() => {
-        if (!lessonId || loading || finished || phase !== 'break') return
+        if (!lessonId || loading || finished || phase !== 'quiz' || focusBreakPending) return
+        const timer = window.setInterval(() => {
+            setFocusSecondsRemaining((prev) => {
+                if (prev <= 1) {
+                    window.clearInterval(timer)
+                    setFocusBreakPending(true)
+                    return 0
+                }
+                return prev - 1
+            })
+        }, 1000)
+
+        return () => window.clearInterval(timer)
+    }, [finished, focusBreakPending, lessonId, loading, phase])
+
+    useEffect(() => {
+        if (!lessonId || loading || finished || (phase !== 'break' && phase !== 'game')) return
         const timer = window.setInterval(() => {
             setPhaseSecondsRemaining((prev) => {
                 if (prev <= 1) {
@@ -330,11 +352,16 @@ function QuizContent() {
     }, [finished, lessonId, loading, phase])
 
     useEffect(() => {
-        if (!lessonId || loading || finished || phase !== 'break' || phaseSecondsRemaining > 0) return
-        setPhase('quiz')
-        setSelected(null)
-        setConfirmed(false)
-        setCycleCount((prev) => prev + 1)
+        if (!lessonId || loading || finished || (phase !== 'break' && phase !== 'game') || phaseSecondsRemaining > 0) return
+        const timer = window.setTimeout(() => {
+            setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
+            setFocusBreakPending(false)
+            setPhase('quiz')
+            setSelected(null)
+            setConfirmed(false)
+            setCycleCount((prev) => prev + 1)
+        }, 0)
+        return () => window.clearTimeout(timer)
     }, [finished, lessonId, loading, phase, phaseSecondsRemaining])
 
     useEffect(() => {
@@ -362,8 +389,7 @@ function QuizContent() {
     const progressPct = quizzes.length > 0 ? Math.round((answeredCount / quizzes.length) * 100) : 0
     const isCorrect = selected !== null && quiz ? selected === quiz.correct_index : false
     const isQuizPhase = phase === 'quiz'
-    const phaseLabel = phase === 'quiz' ? 'Làm câu hỏi' : phase === 'game' ? 'Mini game' : 'Giải lao'
-    const questionsPerGame = QUESTIONS_PER_GAME
+    const phaseLabel = phase === 'quiz' ? 'Làm câu hỏi' : phase === 'choice' ? 'Chọn nghỉ' : phase === 'game' ? 'Mini game' : 'Giải lao'
 
     const handleConfirm = () => {
         if (!isQuizPhase) return
@@ -377,22 +403,26 @@ function QuizContent() {
     const handleNext = () => {
         if (!isQuizPhase) return
         const nextQuestionIndex = quizzes.length > 0 ? (currentQ + 1) % quizzes.length : 0
-        const nextAnsweredSinceGame = answeredSinceGame + 1
-        const shouldEnterMiniGame = nextAnsweredSinceGame >= questionsPerGame
 
         setCurrentQ(nextQuestionIndex)
         setSelected(null)
         setConfirmed(false)
 
-        if (shouldEnterMiniGame) {
-            setPhase('game')
-            setPhaseSecondsRemaining(0)
-            setAnsweredSinceGame(0)
-            setGameView(pickRandomGameView())
-            setGameSeed(Date.now())
-        } else {
-            setAnsweredSinceGame(nextAnsweredSinceGame)
+        if (focusBreakPending) {
+            setPhase('choice')
         }
+    }
+
+    const startBreak = () => {
+        setPhase('break')
+        setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
+    }
+
+    const startMiniGame = () => {
+        setPhase('game')
+        setPhaseSecondsRemaining(Math.min(GAME_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
+        setGameView(pickRandomGameView())
+        setGameSeed(Date.now())
     }
 
     const handleSkip = () => {
@@ -412,10 +442,11 @@ function QuizContent() {
         setRewardType(null)
         setRewardMinutes(0)
         setTotalSecondsRemaining(sessionTotalSeconds)
+        setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
+        setFocusBreakPending(false)
         setPhase('quiz')
         setPhaseSecondsRemaining(0)
         setCycleCount(1)
-        setAnsweredSinceGame(0)
         setGameView(pickRandomGameView())
         setGameSeed(Date.now())
     }
@@ -589,7 +620,9 @@ function QuizContent() {
                 <div>
                     <p className="text-[11px] font-black uppercase tracking-widest text-indigo-500">Luồng Pomodoro Xen Kẽ</p>
                     <p className="text-sm font-black text-indigo-900 mt-1">Pha hiện tại: {phaseLabel}</p>
-                    <p className="text-xs font-bold text-indigo-700 mt-1">Cứ hoàn thành đủ {questionsPerGame} câu sẽ mở 1 mini-game random trong cùng trang.</p>
+                    <p className="text-xs font-bold text-indigo-700 mt-1">
+                        Sau 5 phút tập trung, bé được chọn nghỉ 30 giây hoặc chơi game 60 giây sau khi xong câu hiện tại.
+                    </p>
                 </div>
                 <div className="text-right">
                     <p className="text-[11px] font-black uppercase tracking-widest text-indigo-400">Còn lại toàn phiên</p>
@@ -599,21 +632,30 @@ function QuizContent() {
 
             {phase === 'game' ? (
                 <div className="rounded-3xl border border-gray-100 bg-white p-0 shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between border-b border-gray-100 bg-amber-50 px-4 py-3">
+                        <p className="text-sm font-black text-amber-800">Mini game: {formatTime(phaseSecondsRemaining)}</p>
+                        <button onClick={startBreak} className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-black text-white hover:bg-amber-600">
+                            Kết thúc game
+                        </button>
+                    </div>
                     <iframe
                         key={`${gameView}-${gameSeed}`}
                         src={`/child/games?embed=1&view=${gameView}&randomLevel=1&seed=${gameSeed}`}
                         className="h-[560px] w-full border-0 bg-white"
                         title="Mini game"
                     />
-                    <div className="p-3 text-right border-t border-gray-100 bg-white">
-                        <button
-                            onClick={() => {
-                                setPhase('break')
-                                setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
-                            }}
-                            className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-black text-white hover:bg-amber-600"
-                        >
-                            Đã xong trò này
+                </div>
+            ) : phase === 'choice' ? (
+                <div className="rounded-3xl border border-amber-200 bg-amber-50 p-10 text-center shadow-sm">
+                    <p className="text-xs font-black uppercase tracking-widest text-amber-600">Đến giờ reset</p>
+                    <h2 className="mt-2 text-3xl font-black text-slate-800">Bé muốn nghỉ kiểu nào?</h2>
+                    <p className="mt-2 text-sm font-bold text-slate-500">Chọn một khoảng ngắn để đầu óc nhẹ hơn rồi quay lại câu tiếp theo.</p>
+                    <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <button onClick={startBreak} className="rounded-2xl bg-sky-500 px-5 py-5 text-base font-black text-white hover:bg-sky-600">
+                            Nghỉ 30 giây
+                        </button>
+                        <button onClick={startMiniGame} className="rounded-2xl bg-amber-500 px-5 py-5 text-base font-black text-white hover:bg-amber-600">
+                            Chơi game 60 giây
                         </button>
                     </div>
                 </div>
@@ -715,7 +757,7 @@ function QuizContent() {
                             <p className="text-xs font-black uppercase tracking-widest text-purple-200">Tiến độ</p>
                             <p className="text-sm font-bold mt-2">Đúng: {score} / {quizzes.length}</p>
                             <p className="text-sm font-bold">Đã trả lời: {answeredCount} câu</p>
-                            <p className="text-sm font-bold">Còn {questionsPerGame - answeredSinceGame} câu nữa để vào game</p>
+                            <p className="text-sm font-bold">Còn {formatTime(focusSecondsRemaining)} đến lần nghỉ tiếp theo</p>
                         </div>
 
                         <button onClick={handleSkip} className="w-full py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-900 text-white font-black text-sm">
