@@ -4,6 +4,14 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { api, Lesson, Task } from '@/lib/api-client'
+import { createClient } from '@/lib/supabase/client'
+import {
+    DEFAULT_BREAK_SECONDS,
+    DEFAULT_FREE_QUIZ_SECONDS,
+    DEFAULT_GAME_BREAK_SECONDS,
+    buildSessionPolicy,
+} from '@/lib/learning/session-policy'
+import { loadLearningSessionProgress, saveLearningSessionProgress } from '@/lib/learning/session-storage'
 
 type StudyPhase = 'study' | 'choice' | 'game' | 'break' | 'done'
 
@@ -19,12 +27,8 @@ interface SavedStudyProgress {
     updatedAt: number
 }
 
-const DEFAULT_STUDY_SECONDS = 10 * 60
-const FOCUS_INTERVAL_SECONDS = 5 * 60
-const GAME_PHASE_SECONDS = 60
-const BREAK_PHASE_SECONDS = 30
+const DEFAULT_STUDY_SECONDS = DEFAULT_FREE_QUIZ_SECONDS
 const IDLE_AFTER_SECONDS = 20
-const MIN_ACTIVE_BEFORE_QUIZ_SECONDS = 5 * 60
 const PROGRESS_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const STUDY_PROGRESS_PREFIX = 'mindory:study-progress:'
 const RANDOM_GAME_VIEWS = ['memory', 'maze', 'music'] as const
@@ -57,11 +61,11 @@ function loadSavedProgress(key: string): SavedStudyProgress | null {
             activeSeconds: parsed.activeSeconds ?? 0,
             idleSeconds: parsed.idleSeconds ?? 0,
             studySecondsRemaining: parsed.studySecondsRemaining,
-            focusSecondsRemaining: parsed.focusSecondsRemaining ?? FOCUS_INTERVAL_SECONDS,
+            focusSecondsRemaining: parsed.focusSecondsRemaining ?? buildSessionPolicy({ mode: 'study' }).focusIntervalSeconds,
             phaseSecondsRemaining: parsed.phaseSecondsRemaining ?? 0,
             sessionTotalSeconds: parsed.sessionTotalSeconds ?? DEFAULT_STUDY_SECONDS,
             cycleCount: parsed.cycleCount ?? 1,
-            phase: parsed.phase === 'done' ? 'done' : parsed.phase === 'choice' ? 'choice' : parsed.phase === 'break' ? 'break' : 'study',
+            phase: parsed.phase === 'done' ? 'done' : parsed.phase === 'choice' ? 'choice' : parsed.phase === 'game' ? 'game' : parsed.phase === 'break' ? 'break' : 'study',
             updatedAt: parsed.updatedAt,
         }
     } catch {
@@ -71,6 +75,7 @@ function loadSavedProgress(key: string): SavedStudyProgress | null {
 
 function StudyContent() {
     const searchParams = useSearchParams()
+    const supabase = useMemo(() => createClient(), [])
     const taskId = searchParams.get('taskId')
     const lessonId = searchParams.get('lessonId')
     const isTaskStudy = Boolean(taskId)
@@ -82,7 +87,7 @@ function StudyContent() {
     const [pdfUrl, setPdfUrl] = useState('')
     const [phase, setPhase] = useState<StudyPhase>('study')
     const [studySecondsRemaining, setStudySecondsRemaining] = useState(DEFAULT_STUDY_SECONDS)
-    const [focusSecondsRemaining, setFocusSecondsRemaining] = useState(FOCUS_INTERVAL_SECONDS)
+    const [focusSecondsRemaining, setFocusSecondsRemaining] = useState(() => buildSessionPolicy({ mode: 'study' }).focusIntervalSeconds)
     const [phaseSecondsRemaining, setPhaseSecondsRemaining] = useState(0)
     const [sessionTotalSeconds, setSessionTotalSeconds] = useState(DEFAULT_STUDY_SECONDS)
     const [activeSeconds, setActiveSeconds] = useState(0)
@@ -94,7 +99,11 @@ function StudyContent() {
     const [gameSeed, setGameSeed] = useState(() => Date.now())
     const lastActivityAtRef = useRef(0)
 
-    const requiredActiveSeconds = isTaskStudy ? Math.min(MIN_ACTIVE_BEFORE_QUIZ_SECONDS, Math.max(1, sessionTotalSeconds)) : 0
+    const activePolicy = useMemo(
+        () => buildSessionPolicy({ durationMinutes: task?.session_duration_minutes, assigned: Boolean(task), mode: 'study' }),
+        [task]
+    )
+    const requiredActiveSeconds = isTaskStudy ? Math.min(activePolicy.minActiveBeforeQuizSeconds, Math.max(1, sessionTotalSeconds)) : 0
     const canStartQuiz = !isTaskStudy || activeSeconds >= requiredActiveSeconds || phase === 'done'
 
     const markActivity = useCallback(() => {
@@ -148,11 +157,34 @@ function StudyContent() {
 
                 if (!active) return
 
-                const sessionSeconds = loadedTask?.session_duration_minutes
-                    ? loadedTask.session_duration_minutes * 60
-                    : DEFAULT_STUDY_SECONDS
+                const policy = buildSessionPolicy({ durationMinutes: loadedTask?.session_duration_minutes, assigned: Boolean(loadedTask), mode: 'study' })
+                const sessionSeconds = policy.sessionTotalSeconds
                 const nextProgressKey = getStudyProgressKey(loadedTask?.id ?? null, nextLessonId)
                 const savedProgress = loadSavedProgress(nextProgressKey)
+                const sharedProgress = loadedTask?.id ? loadLearningSessionProgress(loadedTask.id) : null
+                const nextActiveSeconds = Math.max(sharedProgress?.activeSeconds ?? 0, savedProgress?.activeSeconds ?? 0)
+                const nextIdleSeconds = Math.max(sharedProgress?.idleSeconds ?? 0, savedProgress?.idleSeconds ?? 0)
+
+                if (loadedTask?.id && loadedTask.status !== 'completed' && !sharedProgress?.sessionId) {
+                    try {
+                        const {
+                            data: { user },
+                        } = await supabase.auth.getUser()
+                        if (user) {
+                            const session = await api.sessions.start(loadedTask.id, user.id)
+                            if (session?.id) {
+                                saveLearningSessionProgress(loadedTask.id, {
+                                    sessionId: session.id,
+                                    activeSeconds: nextActiveSeconds,
+                                    idleSeconds: nextIdleSeconds,
+                                    studySeconds: nextActiveSeconds,
+                                })
+                            }
+                        }
+                    } catch {
+                        // Quiz can still create the session if study could not start it.
+                    }
+                }
 
                 setTask(loadedTask)
                 setLesson(loadedLesson)
@@ -160,10 +192,10 @@ function StudyContent() {
                 setProgressKey(nextProgressKey)
                 setSessionTotalSeconds(savedProgress?.sessionTotalSeconds ?? sessionSeconds)
                 setStudySecondsRemaining(savedProgress?.studySecondsRemaining ?? sessionSeconds)
-                setFocusSecondsRemaining(savedProgress?.focusSecondsRemaining ?? Math.min(FOCUS_INTERVAL_SECONDS, sessionSeconds))
+                setFocusSecondsRemaining(savedProgress?.focusSecondsRemaining ?? policy.focusIntervalSeconds)
                 setPhaseSecondsRemaining(savedProgress?.phaseSecondsRemaining ?? 0)
-                setActiveSeconds(savedProgress?.activeSeconds ?? 0)
-                setIdleSeconds(savedProgress?.idleSeconds ?? 0)
+                setActiveSeconds(nextActiveSeconds)
+                setIdleSeconds(nextIdleSeconds)
                 markActivity()
                 setPhase(savedProgress?.phase ?? 'study')
                 setCycleCount(savedProgress?.cycleCount ?? 1)
@@ -178,7 +210,7 @@ function StudyContent() {
         return () => {
             active = false
         }
-    }, [lessonId, markActivity, taskId])
+    }, [lessonId, markActivity, supabase, taskId])
 
     useEffect(() => {
         const onVisibilityChange = () => {
@@ -199,6 +231,14 @@ function StudyContent() {
 
     useEffect(() => {
         if (!progressKey || loading) return
+
+        if (taskId) {
+            saveLearningSessionProgress(taskId, {
+                activeSeconds,
+                idleSeconds,
+                studySeconds: activeSeconds,
+            })
+        }
 
         if (phase === 'done') {
             try {
@@ -226,7 +266,7 @@ function StudyContent() {
         } catch {
             // ignore storage failures
         }
-    }, [activeSeconds, cycleCount, focusSecondsRemaining, idleSeconds, loading, phase, phaseSecondsRemaining, progressKey, sessionTotalSeconds, studySecondsRemaining])
+    }, [activeSeconds, cycleCount, focusSecondsRemaining, idleSeconds, loading, phase, phaseSecondsRemaining, progressKey, sessionTotalSeconds, studySecondsRemaining, taskId])
 
     useEffect(() => {
         if (phase !== 'study' || loading) return
@@ -275,9 +315,9 @@ function StudyContent() {
                     window.clearInterval(timer)
                     if (phase === 'game') {
                         setPhase('break')
-                        setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, studySecondsRemaining)))
+                        setPhaseSecondsRemaining(Math.min(DEFAULT_BREAK_SECONDS, Math.max(1, studySecondsRemaining)))
                     } else {
-                        setFocusSecondsRemaining(Math.min(FOCUS_INTERVAL_SECONDS, Math.max(1, studySecondsRemaining)))
+                        setFocusSecondsRemaining(Math.min(activePolicy.focusIntervalSeconds, Math.max(1, studySecondsRemaining)))
                         setCycleCount((prevCycle) => prevCycle + 1)
                         setPhase(studySecondsRemaining > 0 ? 'study' : 'done')
                     }
@@ -288,12 +328,12 @@ function StudyContent() {
         }, 1000)
 
         return () => window.clearInterval(timer)
-    }, [phase, studySecondsRemaining])
+    }, [activePolicy.focusIntervalSeconds, phase, studySecondsRemaining])
 
     const startBreak = () => {
         markActivity()
         setPhase('break')
-        setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, studySecondsRemaining)))
+        setPhaseSecondsRemaining(Math.min(DEFAULT_BREAK_SECONDS, Math.max(1, studySecondsRemaining)))
     }
 
     const startMiniGame = () => {
@@ -301,7 +341,7 @@ function StudyContent() {
         setGameView(pickRandomGameView())
         setGameSeed(Date.now())
         setPhase('game')
-        setPhaseSecondsRemaining(Math.min(GAME_PHASE_SECONDS, Math.max(1, studySecondsRemaining)))
+        setPhaseSecondsRemaining(Math.min(DEFAULT_GAME_BREAK_SECONDS, Math.max(1, studySecondsRemaining)))
     }
 
     if (loading) {
