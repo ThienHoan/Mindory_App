@@ -56,7 +56,8 @@ export default function ChildAIQuizPage() {
 
             <div className="grid gap-4 md:grid-cols-2">
                 {assignments.map((assignment) => {
-                    const title = assignment.pdf_documents?.title || 'Bài AI'
+                    const document = Array.isArray(assignment.pdf_documents) ? assignment.pdf_documents[0] : assignment.pdf_documents
+                    const title = assignment.documentTitle ?? assignment.document?.title ?? document?.title ?? 'Bài AI'
                     const statusLabel = assignment.status === 'completed' ? 'Đã hoàn thành' : 'Chưa làm'
                     return (
                         <div key={assignment.id} className="rounded-3xl border border-purple-100 bg-white p-5 shadow-sm">

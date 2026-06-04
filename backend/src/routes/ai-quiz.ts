@@ -245,6 +245,17 @@ async function isDocumentOwnedByParent(documentId: string, parentId: string) {
     return !error && !!data;
 }
 
+async function isDocumentAssignedToChild(documentId: string, childId: string) {
+    const { data, error } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('id')
+        .eq('document_id', documentId)
+        .eq('child_id', childId)
+        .maybeSingle();
+
+    return !error && !!data;
+}
+
 async function getOwnedQuestion(questionId: string, parentId: string) {
     const { data: questionRow, error: questionError } = await supabaseAdmin
         .from('pdf_questions')
@@ -600,11 +611,14 @@ router.get('/documents', authenticate, requireRole('parent'), async (req, res) =
 });
 
 // GET /ai-quiz/documents/:id
-router.get('/documents/:id', authenticate, requireRole('parent'), async (req, res) => {
+router.get('/documents/:id', authenticate, requireRole('parent', 'child'), async (req, res) => {
     const documentId = getParamId(req.params.id);
 
-    const owned = await isDocumentOwnedByParent(documentId, req.user!.id);
-    if (!owned) {
+    const hasAccess = req.user!.role === 'parent'
+        ? await isDocumentOwnedByParent(documentId, req.user!.id)
+        : await isDocumentAssignedToChild(documentId, req.user!.id);
+
+    if (!hasAccess) {
         res.status(403).json({ error: 'Access denied to this document' });
         return;
     }
@@ -627,7 +641,7 @@ router.get('/documents/:id/playable', authenticate, requireRole('child', 'parent
 
     const { data: doc, error: docError } = await supabaseAdmin
         .from('pdf_documents')
-        .select('id, title, parent_id')
+        .select('id, title, file_url, parent_id')
         .eq('id', documentId)
         .single();
 
@@ -666,7 +680,7 @@ router.get('/documents/:id/playable', authenticate, requireRole('child', 'parent
         return;
     }
 
-    res.json({ document: { id: doc.id, title: doc.title }, questions: questions ?? [] });
+    res.json({ document: { id: doc.id, title: doc.title, file_url: doc.file_url }, questions: questions ?? [] });
 });
 
 export default router;

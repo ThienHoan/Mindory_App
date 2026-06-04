@@ -3,10 +3,10 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { api, Lesson, Task } from '@/lib/api-client'
+import { Document, Page, pdfjs } from 'react-pdf'
+import { AIAssignment, AIQuizDocument, api, Lesson, Task } from '@/lib/api-client'
 import { createClient } from '@/lib/supabase/client'
 import {
-    DEFAULT_BREAK_SECONDS,
     DEFAULT_FREE_QUIZ_SECONDS,
     DEFAULT_GAME_BREAK_SECONDS,
     buildSessionPolicy,
@@ -14,6 +14,8 @@ import {
 import { loadLearningSessionProgress, saveLearningSessionProgress } from '@/lib/learning/session-storage'
 
 type StudyPhase = 'study' | 'choice' | 'game' | 'break' | 'done'
+
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
 
 interface SavedStudyProgress {
     activeSeconds: number
@@ -28,6 +30,7 @@ interface SavedStudyProgress {
 }
 
 const DEFAULT_STUDY_SECONDS = DEFAULT_FREE_QUIZ_SECONDS
+const PDF_FOCUS_BLOCK_SECONDS = 4 * 60
 const IDLE_AFTER_SECONDS = 90
 const PROGRESS_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const STUDY_PROGRESS_PREFIX = 'mindory:study-progress:'
@@ -39,12 +42,206 @@ function formatTime(seconds: number) {
     return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
+function clampPage(page: number, min: number, max: number) {
+    return Math.min(Math.max(page, min), max)
+}
+
+type AIAssignmentDocument = Pick<AIQuizDocument, 'id' | 'title'> & Partial<Pick<AIQuizDocument, 'file_url' | 'created_at'>>
+
+function getAiAssignmentDocument(documents: AIAssignment['pdf_documents']): AIAssignmentDocument | null {
+    if (Array.isArray(documents)) return documents[0] ?? null
+    return documents ?? null
+}
+
+function getAiAssignmentTitle(assignment: AIAssignment) {
+    const document = getAiAssignmentDocument(assignment.pdf_documents)
+    return assignment.documentTitle ?? assignment.document?.title ?? document?.title ?? 'Bài AI'
+}
+
+function getAiAssignmentFileUrl(assignment: AIAssignment) {
+    const document = getAiAssignmentDocument(assignment.pdf_documents)
+    return assignment.pdfUrl ?? assignment.document?.file_url ?? document?.file_url ?? ''
+}
+
+function getAiPdfStoragePath(fileUrl: string) {
+    const trimmed = fileUrl.trim()
+    if (!trimmed) return ''
+
+    if (trimmed.startsWith('storage:')) {
+        return trimmed.replace(/^storage:/, '').replace(/^\/+/, '')
+    }
+
+    try {
+        const url = new URL(trimmed)
+        const markers = ['/storage/v1/object/sign/pdfs/', '/storage/v1/object/public/pdfs/']
+        for (const marker of markers) {
+            const index = url.pathname.indexOf(marker)
+            if (index >= 0) return decodeURIComponent(url.pathname.slice(index + marker.length))
+        }
+        return ''
+    } catch {
+        return trimmed.replace(/^pdfs\//, '').replace(/^\/+/, '')
+    }
+}
+
+function resolveAiPdfUrl(fileUrl: string, supabase: ReturnType<typeof createClient>) {
+    const storagePath = getAiPdfStoragePath(fileUrl)
+    if (storagePath) {
+        const { data } = supabase.storage.from('pdfs').getPublicUrl(storagePath)
+        return data.publicUrl
+    }
+
+    return fileUrl.trim()
+}
+
 function pickRandomGameView() {
     return RANDOM_GAME_VIEWS[Math.floor(Math.random() * RANDOM_GAME_VIEWS.length)]
 }
 
 function getStudyProgressKey(taskId: string | null, lessonId: string) {
     return `${STUDY_PROGRESS_PREFIX}${taskId ? `task:${taskId}` : `lesson:${lessonId}`}`
+}
+
+function BookPdfViewer({
+    pdfUrl,
+    title,
+    startPage = 1,
+    endPage,
+    totalPages,
+}: {
+    pdfUrl: string
+    title: string
+    startPage?: number
+    endPage?: number
+    totalPages?: number
+}) {
+    const containerRef = useRef<HTMLDivElement | null>(null)
+    const [numPages, setNumPages] = useState<number | null>(null)
+    const [pageNumber, setPageNumber] = useState(Math.max(1, startPage))
+    const [pageWidth, setPageWidth] = useState(680)
+    const [flipStage, setFlipStage] = useState<'idle' | 'out' | 'in'>('idle')
+    const [flipDirection, setFlipDirection] = useState<'next' | 'prev'>('next')
+
+    const minPage = Math.max(1, startPage)
+    const knownLastPage = numPages ?? totalPages ?? endPage ?? minPage
+    const maxPage = Math.max(minPage, Math.min(endPage ?? knownLastPage, knownLastPage))
+    const pdfFile = useMemo(() => `/api/pdf-proxy?url=${encodeURIComponent(pdfUrl)}`, [pdfUrl])
+
+    useEffect(() => {
+        setNumPages(null)
+        setPageNumber(Math.max(1, startPage))
+        setFlipStage('idle')
+    }, [pdfUrl, startPage])
+
+    useEffect(() => {
+        const node = containerRef.current
+        if (!node || typeof ResizeObserver === 'undefined') return
+
+        const observer = new ResizeObserver(([entry]) => {
+            setPageWidth(Math.min(860, Math.max(280, entry.contentRect.width - 32)))
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+    }, [])
+
+    useEffect(() => {
+        setPageNumber((current) => clampPage(current, minPage, maxPage))
+    }, [maxPage, minPage])
+
+    function turnTo(nextPage: number) {
+        const target = clampPage(nextPage, minPage, maxPage)
+        if (target === pageNumber || flipStage !== 'idle') return
+
+        setFlipDirection(target > pageNumber ? 'next' : 'prev')
+        setFlipStage('out')
+
+        window.setTimeout(() => {
+            setPageNumber(target)
+            setFlipStage('in')
+        }, 170)
+
+        window.setTimeout(() => setFlipStage('idle'), 340)
+    }
+
+    const flipTransform =
+        flipStage === 'out'
+            ? flipDirection === 'next'
+                ? 'rotateY(-74deg)'
+                : 'rotateY(74deg)'
+            : flipStage === 'in'
+                ? flipDirection === 'next'
+                    ? 'rotateY(10deg)'
+                    : 'rotateY(-10deg)'
+                : 'rotateY(0deg)'
+
+    return (
+        <section className="h-full min-h-[620px] rounded-3xl border border-purple-100 bg-gradient-to-b from-purple-50 to-white p-4 shadow-sm">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <p className="text-xs font-black uppercase tracking-widest text-purple-500">Tài liệu PDF</p>
+                    <p className="text-sm font-bold text-gray-600">Trang {pageNumber}/{maxPage}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => turnTo(pageNumber - 1)}
+                        disabled={pageNumber <= minPage || flipStage !== 'idle'}
+                        className="rounded-xl border border-purple-100 bg-white px-4 py-2 text-xs font-black text-purple-600 shadow-sm transition-colors hover:bg-purple-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                        Trang trước
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => turnTo(pageNumber + 1)}
+                        disabled={pageNumber >= maxPage || flipStage !== 'idle'}
+                        className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-black text-white shadow-sm transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                        Trang sau
+                    </button>
+                </div>
+            </div>
+
+            <div ref={containerRef} className="min-h-[520px] overflow-hidden rounded-2xl bg-[#f8f4ec] px-2 py-5 shadow-inner [perspective:1400px]">
+                <div
+                    className="mx-auto origin-left rounded-xl bg-white shadow-2xl ring-1 ring-black/5"
+                    style={{
+                        maxWidth: pageWidth,
+                        transform: flipTransform,
+                        transformOrigin: flipDirection === 'next' ? 'left center' : 'right center',
+                        transition: 'transform 170ms ease, opacity 170ms ease',
+                        opacity: flipStage === 'out' ? 0.68 : 1,
+                    }}
+                >
+                    <Document
+                        file={pdfFile}
+                        onLoadSuccess={({ numPages }) => {
+                            setNumPages(numPages)
+                            setPageNumber((current) => clampPage(current, minPage, Math.min(endPage ?? numPages, numPages)))
+                        }}
+                        loading={<div className="p-10 text-center text-sm font-bold text-gray-400">Đang tải PDF...</div>}
+                        error={
+                            <div className="p-8 text-center">
+                                <p className="text-sm font-bold text-red-500">Không thể nhúng PDF này.</p>
+                                <a href={pdfUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex rounded-xl bg-blue-50 px-4 py-2 text-xs font-black text-blue-700 hover:bg-blue-100">
+                                    Mở tài liệu gốc
+                                </a>
+                            </div>
+                        }
+                    >
+                        <Page
+                            key={pageNumber}
+                            pageNumber={pageNumber}
+                            width={pageWidth}
+                            renderAnnotationLayer={false}
+                            renderTextLayer={false}
+                            loading={<div className="p-10 text-center text-sm font-bold text-gray-400">Đang mở trang...</div>}
+                        />
+                    </Document>
+                </div>
+            </div>
+            <p className="mt-3 text-center text-xs font-bold text-gray-400">{title}</p>
+        </section>
+    )
 }
 
 function loadSavedProgress(key: string): SavedStudyProgress | null {
@@ -61,7 +258,7 @@ function loadSavedProgress(key: string): SavedStudyProgress | null {
             activeSeconds: parsed.activeSeconds ?? 0,
             idleSeconds: parsed.idleSeconds ?? 0,
             studySecondsRemaining: parsed.studySecondsRemaining,
-            focusSecondsRemaining: parsed.focusSecondsRemaining ?? buildSessionPolicy({ mode: 'study' }).focusIntervalSeconds,
+            focusSecondsRemaining: parsed.focusSecondsRemaining ?? PDF_FOCUS_BLOCK_SECONDS,
             phaseSecondsRemaining: parsed.phaseSecondsRemaining ?? 0,
             sessionTotalSeconds: parsed.sessionTotalSeconds ?? DEFAULT_STUDY_SECONDS,
             cycleCount: parsed.cycleCount ?? 1,
@@ -78,7 +275,10 @@ function StudyContent() {
     const supabase = useMemo(() => createClient(), [])
     const taskId = searchParams.get('taskId')
     const lessonId = searchParams.get('lessonId')
+    const aiAssignmentId = searchParams.get('aiAssignmentId')
+    const aiDocumentId = searchParams.get('aiDocumentId') || searchParams.get('documentId')
     const isTaskStudy = Boolean(taskId)
+    const isAiStudy = Boolean(aiAssignmentId || aiDocumentId)
 
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -87,7 +287,7 @@ function StudyContent() {
     const [pdfUrl, setPdfUrl] = useState('')
     const [phase, setPhase] = useState<StudyPhase>('study')
     const [studySecondsRemaining, setStudySecondsRemaining] = useState(DEFAULT_STUDY_SECONDS)
-    const [focusSecondsRemaining, setFocusSecondsRemaining] = useState(() => buildSessionPolicy({ mode: 'study' }).focusIntervalSeconds)
+    const [focusSecondsRemaining, setFocusSecondsRemaining] = useState(PDF_FOCUS_BLOCK_SECONDS)
     const [phaseSecondsRemaining, setPhaseSecondsRemaining] = useState(0)
     const [sessionTotalSeconds, setSessionTotalSeconds] = useState(DEFAULT_STUDY_SECONDS)
     const [activeSeconds, setActiveSeconds] = useState(0)
@@ -95,6 +295,7 @@ function StudyContent() {
     const [isActivelyLearning, setIsActivelyLearning] = useState(true)
     const [cycleCount, setCycleCount] = useState(1)
     const [progressKey, setProgressKey] = useState<string | null>(null)
+    const [aiQuizHref, setAiQuizHref] = useState<string | null>(null)
     const [gameView, setGameView] = useState<(typeof RANDOM_GAME_VIEWS)[number]>(() => pickRandomGameView())
     const [gameSeed, setGameSeed] = useState(() => Date.now())
     const lastActivityAtRef = useRef(0)
@@ -113,9 +314,9 @@ function StudyContent() {
 
     const effectiveLessonId = lesson?.id ?? lessonId ?? task?.lesson_id ?? ''
     const quizHref = effectiveLessonId
-        ? task
+        ? aiQuizHref ?? (task
             ? `/child/quiz?taskId=${task.id}&lessonId=${effectiveLessonId}&lessonTitle=${encodeURIComponent(lesson?.title ?? 'Bài học')}&duration=${task.session_duration_minutes}`
-            : `/child/quiz?lessonId=${effectiveLessonId}&lessonTitle=${encodeURIComponent(lesson?.title ?? 'Bài học')}`
+            : `/child/quiz?lessonId=${effectiveLessonId}&lessonTitle=${encodeURIComponent(lesson?.title ?? 'Bài học')}`)
         : '/child/lesson'
 
     const phaseLabel = useMemo(() => {
@@ -135,31 +336,75 @@ function StudyContent() {
                 setError(null)
 
                 const loadedTask = taskId ? await api.tasks.get(taskId) : null
-                const nextLessonId = loadedTask?.lesson_id ?? lessonId
-                if (!nextLessonId) {
-                    throw new Error('Thiếu bài học để mở phòng học PDF.')
+                let loadedLesson: Lesson
+                let nextPdfUrl = ''
+                let nextProgressKey = ''
+                let nextAiQuizHref: string | null = null
+
+                if (!loadedTask && isAiStudy) {
+                    const assignments = await api.aiAssignments.listMine()
+                    const assignment = assignments.find((item) => (
+                        (aiAssignmentId && item.id === aiAssignmentId) ||
+                        (aiDocumentId && item.document_id === aiDocumentId)
+                    ))
+
+                    if (!assignment) {
+                        throw new Error('Không tìm thấy bài AI được giao.')
+                    }
+
+                    const playable = await api.aiQuizzes.getPlayable(assignment.document_id)
+                    const title = playable.document?.title ?? getAiAssignmentTitle(assignment)
+                    const aiPdfUrl = resolveAiPdfUrl(playable.document?.file_url ?? getAiAssignmentFileUrl(assignment), supabase)
+
+                    if (!aiPdfUrl) {
+                        throw new Error('Bài AI này chưa có PDF để học.')
+                    }
+
+                    loadedLesson = {
+                        id: assignment.document_id,
+                        subject_id: 'ai-pdf',
+                        title,
+                        description: 'Bài PDF AI được phụ huynh giao. Bé học tài liệu trước rồi làm kiểm tra.',
+                        pdf_url: aiPdfUrl,
+                        total_pages: 1,
+                    }
+                    nextPdfUrl = aiPdfUrl
+                    nextProgressKey = getStudyProgressKey(null, `ai:${assignment.id}`)
+                    nextAiQuizHref = `/child/quiz?aiAssignmentId=${assignment.id}&aiDocumentId=${assignment.document_id}&lessonTitle=${encodeURIComponent(title)}`
+                } else {
+                    const nextLessonId = loadedTask?.lesson_id ?? lessonId
+                    if (!nextLessonId) {
+                        throw new Error('Thiếu bài học để mở phòng học PDF.')
+                    }
+
+                    const [baseLesson, pdf] = await Promise.all([
+                        loadedTask?.lessons
+                            ? Promise.resolve({
+                                id: loadedTask.lessons.id ?? loadedTask.lesson_id,
+                                subject_id: '',
+                                title: loadedTask.lessons.title,
+                                description: loadedTask.lessons.description,
+                                pdf_url: loadedTask.lessons.pdf_url,
+                                pdf_path: loadedTask.lessons.pdf_path,
+                                total_pages: loadedTask.lessons.total_pages,
+                            } satisfies Lesson)
+                            : api.lessons.get(nextLessonId),
+                        api.lessons.getPdfUrl(nextLessonId),
+                    ])
+
+                    loadedLesson = baseLesson
+                    nextPdfUrl = pdf.url
+                    nextProgressKey = getStudyProgressKey(loadedTask?.id ?? null, nextLessonId)
                 }
 
-                const [loadedLesson, pdf] = await Promise.all([
-                    loadedTask?.lessons
-                        ? Promise.resolve({
-                            id: loadedTask.lessons.id ?? loadedTask.lesson_id,
-                            subject_id: '',
-                            title: loadedTask.lessons.title,
-                            description: loadedTask.lessons.description,
-                            pdf_url: loadedTask.lessons.pdf_url,
-                            pdf_path: loadedTask.lessons.pdf_path,
-                            total_pages: loadedTask.lessons.total_pages,
-                        } satisfies Lesson)
-                        : api.lessons.get(nextLessonId),
-                    api.lessons.getPdfUrl(nextLessonId),
-                ])
+                if (!nextProgressKey) {
+                    throw new Error('Thiếu bài học để mở phòng học PDF.')
+                }
 
                 if (!active) return
 
                 const policy = buildSessionPolicy({ durationMinutes: loadedTask?.session_duration_minutes, assigned: Boolean(loadedTask), mode: 'study' })
                 const sessionSeconds = policy.sessionTotalSeconds
-                const nextProgressKey = getStudyProgressKey(loadedTask?.id ?? null, nextLessonId)
                 const savedProgress = loadSavedProgress(nextProgressKey)
                 const sharedProgress = loadedTask?.id ? loadLearningSessionProgress(loadedTask.id) : null
                 const nextActiveSeconds = Math.max(sharedProgress?.activeSeconds ?? 0, savedProgress?.activeSeconds ?? 0)
@@ -188,11 +433,12 @@ function StudyContent() {
 
                 setTask(loadedTask)
                 setLesson(loadedLesson)
-                setPdfUrl(pdf.url)
+                setPdfUrl(nextPdfUrl)
                 setProgressKey(nextProgressKey)
+                setAiQuizHref(nextAiQuizHref)
                 setSessionTotalSeconds(savedProgress?.sessionTotalSeconds ?? sessionSeconds)
                 setStudySecondsRemaining(savedProgress?.studySecondsRemaining ?? sessionSeconds)
-                setFocusSecondsRemaining(Math.min(savedProgress?.focusSecondsRemaining ?? policy.focusIntervalSeconds, policy.focusIntervalSeconds))
+                setFocusSecondsRemaining(Math.min(savedProgress?.focusSecondsRemaining ?? PDF_FOCUS_BLOCK_SECONDS, PDF_FOCUS_BLOCK_SECONDS))
                 setPhaseSecondsRemaining(savedProgress?.phaseSecondsRemaining ?? 0)
                 setActiveSeconds(nextActiveSeconds)
                 setIdleSeconds(nextIdleSeconds)
@@ -210,7 +456,7 @@ function StudyContent() {
         return () => {
             active = false
         }
-    }, [lessonId, markActivity, supabase, taskId])
+    }, [aiAssignmentId, aiDocumentId, isAiStudy, lessonId, markActivity, supabase, taskId])
 
     useEffect(() => {
         const onVisibilityChange = () => {
@@ -293,7 +539,6 @@ function StudyContent() {
             })
 
             setFocusSecondsRemaining((prev) => {
-                if (!isTaskStudy) return prev
                 if (prev <= 1) {
                     window.clearInterval(timer)
                     setPhase('choice')
@@ -304,7 +549,7 @@ function StudyContent() {
         }, 1000)
 
         return () => window.clearInterval(timer)
-    }, [isTaskStudy, loading, phase])
+    }, [loading, phase])
 
     useEffect(() => {
         if (phase !== 'game' && phase !== 'break') return
@@ -314,10 +559,11 @@ function StudyContent() {
                 if (prev <= 1) {
                     window.clearInterval(timer)
                     if (phase === 'game') {
-                        setPhase('break')
-                        setPhaseSecondsRemaining(Math.min(DEFAULT_BREAK_SECONDS, Math.max(1, studySecondsRemaining)))
+                        setFocusSecondsRemaining(Math.min(PDF_FOCUS_BLOCK_SECONDS, Math.max(1, studySecondsRemaining)))
+                        setCycleCount((prevCycle) => prevCycle + 1)
+                        setPhase(studySecondsRemaining > 0 ? 'study' : 'done')
                     } else {
-                        setFocusSecondsRemaining(Math.min(activePolicy.focusIntervalSeconds, Math.max(1, studySecondsRemaining)))
+                        setFocusSecondsRemaining(Math.min(PDF_FOCUS_BLOCK_SECONDS, Math.max(1, studySecondsRemaining)))
                         setCycleCount((prevCycle) => prevCycle + 1)
                         setPhase(studySecondsRemaining > 0 ? 'study' : 'done')
                     }
@@ -328,12 +574,14 @@ function StudyContent() {
         }, 1000)
 
         return () => window.clearInterval(timer)
-    }, [activePolicy.focusIntervalSeconds, phase, studySecondsRemaining])
+    }, [phase, studySecondsRemaining])
 
-    const startBreak = () => {
+    const continueStudying = () => {
         markActivity()
-        setPhase('break')
-        setPhaseSecondsRemaining(Math.min(DEFAULT_BREAK_SECONDS, Math.max(1, studySecondsRemaining)))
+        setFocusSecondsRemaining(Math.min(PDF_FOCUS_BLOCK_SECONDS, Math.max(1, studySecondsRemaining)))
+        setCycleCount((prevCycle) => prevCycle + 1)
+        setPhase(studySecondsRemaining > 0 ? 'study' : 'done')
+        setPhaseSecondsRemaining(0)
     }
 
     const startMiniGame = () => {
@@ -381,12 +629,10 @@ function StudyContent() {
                         <p className="text-[10px] font-black uppercase text-slate-400">Còn phiên học</p>
                         <p className="text-lg font-black tabular-nums text-slate-800">{formatTime(studySecondsRemaining)}</p>
                     </div>
-                    {isTaskStudy ? (
-                        <div className="rounded-2xl bg-blue-50 px-4 py-2">
-                            <p className="text-[10px] font-black uppercase text-blue-400">Đến lần nghỉ</p>
-                            <p className="text-lg font-black tabular-nums text-blue-700">{formatTime(focusSecondsRemaining)}</p>
-                        </div>
-                    ) : null}
+                    <div className="rounded-2xl bg-blue-50 px-4 py-2">
+                        <p className="text-[10px] font-black uppercase text-blue-400">Đến lựa chọn</p>
+                        <p className="text-lg font-black tabular-nums text-blue-700">{formatTime(focusSecondsRemaining)}</p>
+                    </div>
                     <div className="rounded-2xl bg-emerald-50 px-4 py-2">
                         <p className="text-[10px] font-black uppercase text-emerald-500">Học active</p>
                         <p className="text-lg font-black tabular-nums text-emerald-700">{formatTime(activeSeconds)}</p>
@@ -419,7 +665,7 @@ function StudyContent() {
 
             <div className="relative min-h-[620px] flex-1 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
                 {pdfUrl ? (
-                    <iframe src={pdfUrl} title={lesson.title} className="h-full min-h-[620px] w-full border-0 bg-slate-50" />
+                    <BookPdfViewer pdfUrl={pdfUrl} title={lesson.title} totalPages={lesson.total_pages} />
                 ) : (
                     <div className="flex h-full min-h-[620px] items-center justify-center text-sm font-bold text-slate-400">Bài học chưa có PDF.</div>
                 )}
@@ -427,12 +673,12 @@ function StudyContent() {
                 {phase === 'choice' ? (
                     <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
                         <div className="w-full max-w-lg rounded-3xl bg-white p-7 text-center shadow-2xl">
-                            <p className="text-xs font-black uppercase tracking-widest text-amber-500">Đến giờ reset</p>
-                            <h2 className="mt-2 text-3xl font-black text-slate-800">Bé muốn nghỉ kiểu nào?</h2>
-                            <p className="mt-2 text-sm font-bold text-slate-500">Nghỉ ngắn để quay lại học nhẹ hơn.</p>
+                            <p className="text-xs font-black uppercase tracking-widest text-amber-500">Đã học 4 phút</p>
+                            <h2 className="mt-2 text-3xl font-black text-slate-800">Bé muốn học tiếp hay chơi game?</h2>
+                            <p className="mt-2 text-sm font-bold text-slate-500">Chọn học tiếp để quay lại PDF ngay, hoặc chơi mini game 60 giây rồi hệ thống tự đưa bé về học.</p>
                             <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                <button onClick={startBreak} className="rounded-2xl bg-sky-500 px-5 py-5 text-base font-black text-white hover:bg-sky-600">
-                                    Nghỉ 30 giây
+                                <button onClick={continueStudying} className="rounded-2xl bg-sky-500 px-5 py-5 text-base font-black text-white hover:bg-sky-600">
+                                    Học tiếp
                                 </button>
                                 <button onClick={startMiniGame} className="rounded-2xl bg-amber-500 px-5 py-5 text-base font-black text-white hover:bg-amber-600">
                                     Chơi game 60 giây
@@ -446,9 +692,7 @@ function StudyContent() {
                     <div className="absolute inset-0 z-20 flex flex-col bg-white">
                         <div className="flex items-center justify-between border-b border-amber-100 bg-amber-50 px-4 py-3">
                             <p className="text-sm font-black text-amber-800">Mini game: {formatTime(phaseSecondsRemaining)}</p>
-                            <button onClick={startBreak} className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-black text-white hover:bg-amber-600">
-                                Kết thúc game
-                            </button>
+                            <p className="text-xs font-black uppercase tracking-widest text-amber-600">Hết giờ sẽ tự quay lại PDF</p>
                         </div>
                         <iframe
                             key={`${gameView}-${gameSeed}`}

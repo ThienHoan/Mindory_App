@@ -109,9 +109,9 @@ router.get('/', authenticate, requireRole('parent'), async (req, res) => {
 router.get('/mine', authenticate, requireRole('child'), async (req, res) => {
     const childId = req.user!.id;
 
-    const { data, error } = await supabaseAdmin
+    const { data: assignments, error } = await supabaseAdmin
         .from('assigned_ai_quizzes')
-        .select('*, pdf_documents(id, title, created_at), profiles!assigned_ai_quizzes_parent_id_fkey(id, full_name, email)')
+        .select('*, profiles!assigned_ai_quizzes_parent_id_fkey(id, full_name, email)')
         .eq('child_id', childId)
         .order('assigned_at', { ascending: false });
 
@@ -120,7 +120,33 @@ router.get('/mine', authenticate, requireRole('child'), async (req, res) => {
         return;
     }
 
-    res.json(data ?? []);
+    const documentIds = Array.from(new Set((assignments ?? []).map((assignment) => assignment.document_id).filter(Boolean)));
+    let documentsById = new Map<string, { id: string; title: string; file_url: string; created_at: string }>();
+
+    if (documentIds.length > 0) {
+        const { data: documents, error: documentsError } = await supabaseAdmin
+            .from('pdf_documents')
+            .select('id, title, file_url, created_at')
+            .in('id', documentIds);
+
+        if (documentsError) {
+            res.status(500).json({ error: documentsError.message });
+            return;
+        }
+
+        documentsById = new Map((documents ?? []).map((document) => [document.id, document]));
+    }
+
+    res.json((assignments ?? []).map((assignment) => {
+        const document = documentsById.get(assignment.document_id) ?? null;
+        return {
+            ...assignment,
+            pdf_documents: document,
+            document,
+            documentTitle: document?.title ?? null,
+            pdfUrl: document?.file_url ?? null,
+        };
+    }));
 });
 
 // PATCH /ai-assignments/:id/complete

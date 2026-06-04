@@ -73,15 +73,15 @@ export default function UploadPDFPage() {
 
             if (uploadError) throw new Error(`Upload error: ${uploadError.message}`)
 
-            const { data: signedData, error: signedError } = await supabase.storage
+            const { data: publicData } = supabase.storage
                 .from('pdfs')
-                .createSignedUrl(filePath, 60 * 30)
+                .getPublicUrl(filePath)
 
-            if (signedError || !signedData?.signedUrl) {
-                throw new Error(`Signed URL error: ${signedError?.message || 'Cannot create signed URL'}`)
+            if (!publicData?.publicUrl) {
+                throw new Error('Cannot create PDF URL')
             }
 
-            await api.aiQuizzes.upload(title, signedData.signedUrl)
+            await api.aiQuizzes.upload(title, publicData.publicUrl)
             router.push('/parent/pdf-quiz')
         } catch (err: unknown) {
             console.error('Upload process failed:', err)
