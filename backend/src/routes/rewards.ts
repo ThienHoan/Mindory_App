@@ -1,83 +1,170 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
+import { authenticate } from '../middleware/auth';
 
 const router = Router();
 
-// =========================================================
-// REWARD STORE  (reward_items table)
-// =========================================================
+type RedemptionStatus = 'requested' | 'approved' | 'fulfilled' | 'rejected';
 
-/**
- * GET /reward-store
- * Query params:
- *   - parentId  → lấy tất cả quà của parent (trang quản lý ba/mẹ)
- *   - childId   → lấy quà của parent_id tương ứng với bé (trang bé)
- */
-router.get('/reward-store', async (req, res) => {
+function isAdmin(req: Express.Request) {
+    return req.user?.role === 'admin';
+}
+
+function ensureParentAccess(req: Express.Request, parentId: unknown) {
+    if (typeof parentId !== 'string' || parentId.length === 0) {
+        return { ok: false as const, status: 400, error: 'Missing parentId' };
+    }
+
+    if (!isAdmin(req) && req.user?.id !== parentId) {
+        return { ok: false as const, status: 403, error: 'You cannot manage rewards for this parent' };
+    }
+
+    return { ok: true as const, parentId };
+}
+
+function ensureChildAccess(req: Express.Request, childId: unknown) {
+    if (typeof childId !== 'string' || childId.length === 0) {
+        return { ok: false as const, status: 400, error: 'Missing childId' };
+    }
+
+    if (!isAdmin(req) && req.user?.role === 'child' && req.user.id !== childId) {
+        return { ok: false as const, status: 403, error: 'You cannot redeem rewards for another child' };
+    }
+
+    return { ok: true as const, childId };
+}
+
+function mapRewardRpcError(message?: string) {
+    const text = message ?? 'Reward request failed';
+    if (text.includes('reward_not_found') || text.includes('redemption_not_found') || text.includes('child_not_found')) {
+        return { status: 404, error: 'Reward request was not found' };
+    }
+    if (text.includes('reward_not_available')) {
+        return { status: 400, error: 'This reward is not available' };
+    }
+    if (text.includes('not_enough_xp')) {
+        return { status: 400, error: 'Not enough XP to redeem this reward' };
+    }
+    if (text.includes('reward_not_owned_by_child_parent') || text.includes('profile_is_not_child')) {
+        return { status: 403, error: 'This reward does not belong to the child account' };
+    }
+    if (text.includes('invalid_redemption_transition')) {
+        return { status: 400, error: 'Invalid reward redemption status transition' };
+    }
+    if (text.includes('invalid_redemption_status')) {
+        return { status: 400, error: 'Invalid reward redemption status' };
+    }
+    return { status: 500, error: text };
+}
+
+async function assertChildBelongsToParent(childId: string, parentId: string) {
+    const { data, error } = await supabaseAdmin
+        .from('profiles')
+        .select('id, parent_id, role')
+        .eq('id', childId)
+        .single();
+
+    if (error || !data) {
+        return { ok: false as const, status: 404, error: 'Child profile not found' };
+    }
+
+    if (data.role !== 'child' || data.parent_id !== parentId) {
+        return { ok: false as const, status: 403, error: 'Child does not belong to this parent' };
+    }
+
+    return { ok: true as const };
+}
+
+router.get('/reward-store', authenticate, async (req, res) => {
     const { parentId, childId } = req.query;
 
     if (!parentId && !childId) {
-        res.status(400).json({ error: 'Cần truyền parentId hoặc childId' });
+        res.status(400).json({ error: 'Provide parentId or childId' });
         return;
     }
 
     try {
-        let resolvedParentId = parentId as string | undefined;
+        let resolvedParentId = typeof parentId === 'string' ? parentId : undefined;
 
-        // Nếu truyền childId, lấy parent_id từ profile của bé
-        if (childId && !parentId) {
+        if (resolvedParentId) {
+            const access = ensureParentAccess(req, resolvedParentId);
+            if (!access.ok) {
+                res.status(access.status).json({ error: access.error });
+                return;
+            }
+        }
+
+        if (childId && !resolvedParentId) {
+            const childAccess = ensureChildAccess(req, String(childId));
+            if (!childAccess.ok) {
+                res.status(childAccess.status).json({ error: childAccess.error });
+                return;
+            }
+
             const { data: profile, error: profileErr } = await supabaseAdmin
                 .from('profiles')
-                .select('parent_id')
+                .select('parent_id, role')
                 .eq('id', String(childId))
                 .single();
 
-            if (profileErr || !profile?.parent_id) {
-                res.status(404).json({ error: 'Không tìm thấy thông tin bé hoặc bé chưa liên kết với ba/mẹ' });
+            if (profileErr || !profile?.parent_id || profile.role !== 'child') {
+                res.status(404).json({ error: 'Child profile not found or not linked to a parent' });
                 return;
             }
+
+            if (req.user?.role === 'parent' && !isAdmin(req) && profile.parent_id !== req.user.id) {
+                res.status(403).json({ error: 'Child does not belong to this parent' });
+                return;
+            }
+
             resolvedParentId = profile.parent_id;
         }
 
-        let query = supabaseAdmin
+        const { data, error } = await supabaseAdmin
             .from('reward_items')
             .select('*')
             .eq('parent_id', resolvedParentId!)
             .is('deleted_at', null)
             .order('created_at', { ascending: false });
 
-        const { data, error } = await query;
-
         if (error) {
             res.status(500).json({ error: error.message });
             return;
         }
-        res.json(data);
+        res.json(data ?? []);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }
 });
 
-/**
- * POST /reward-store
- * Body: { parentId, title, description?, costPoints }
- * Ba/mẹ tạo quà mới.
- */
-router.post('/reward-store', async (req, res) => {
+router.post('/reward-store', authenticate, async (req, res) => {
     const { parentId, title, description, costPoints } = req.body;
+    const access = ensureParentAccess(req, parentId);
 
-    if (!parentId || !title || !costPoints) {
-        res.status(400).json({ error: 'Thiếu trường bắt buộc: parentId, title, costPoints' });
+    if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
+        return;
+    }
+    if (req.user?.role !== 'parent' && !isAdmin(req)) {
+        res.status(403).json({ error: 'Only parents can create reward items' });
+        return;
+    }
+
+    const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+    const normalizedCost = Number(costPoints);
+
+    if (!normalizedTitle || !Number.isInteger(normalizedCost) || normalizedCost <= 0) {
+        res.status(400).json({ error: 'title and positive integer costPoints are required' });
         return;
     }
 
     const { data, error } = await supabaseAdmin
         .from('reward_items')
         .insert({
-            parent_id: parentId,
-            title: title.trim(),
-            description: description?.trim() || null,
-            cost_points: Number(costPoints),
+            parent_id: access.parentId,
+            title: normalizedTitle,
+            description: typeof description === 'string' && description.trim() ? description.trim() : null,
+            cost_points: normalizedCost,
         })
         .select()
         .single();
@@ -89,17 +176,13 @@ router.post('/reward-store', async (req, res) => {
     res.status(201).json(data);
 });
 
-/**
- * PATCH /reward-store/:id
- * Body: { parentId, isActive }
- * Ba/mẹ ẩn/hiện quà.
- */
-router.patch('/reward-store/:id', async (req, res) => {
+router.patch('/reward-store/:id', authenticate, async (req, res) => {
     const { id } = req.params;
     const { parentId, isActive } = req.body;
+    const access = ensureParentAccess(req, parentId);
 
-    if (!parentId) {
-        res.status(400).json({ error: 'Thiếu parentId' });
+    if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
         return;
     }
 
@@ -107,7 +190,7 @@ router.patch('/reward-store/:id', async (req, res) => {
         .from('reward_items')
         .update({ is_active: Boolean(isActive) })
         .eq('id', id)
-        .eq('parent_id', parentId)
+        .eq('parent_id', access.parentId)
         .is('deleted_at', null)
         .select()
         .single();
@@ -117,23 +200,19 @@ router.patch('/reward-store/:id', async (req, res) => {
         return;
     }
     if (!data) {
-        res.status(404).json({ error: 'Không tìm thấy phần thưởng hoặc bạn không có quyền' });
+        res.status(404).json({ error: 'Reward item not found' });
         return;
     }
     res.json(data);
 });
 
-/**
- * DELETE /reward-store/:id
- * Body: { parentId }
- * Ba/mẹ xóa quà (soft delete).
- */
-router.delete('/reward-store/:id', async (req, res) => {
+router.delete('/reward-store/:id', authenticate, async (req, res) => {
     const { id } = req.params;
     const { parentId } = req.body;
+    const access = ensureParentAccess(req, parentId);
 
-    if (!parentId) {
-        res.status(400).json({ error: 'Thiếu parentId' });
+    if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
         return;
     }
 
@@ -141,7 +220,7 @@ router.delete('/reward-store/:id', async (req, res) => {
         .from('reward_items')
         .update({ deleted_at: new Date().toISOString() })
         .eq('id', id)
-        .eq('parent_id', parentId);
+        .eq('parent_id', access.parentId);
 
     if (error) {
         res.status(500).json({ error: error.message });
@@ -150,98 +229,40 @@ router.delete('/reward-store/:id', async (req, res) => {
     res.json({ success: true });
 });
 
-/**
- * POST /reward-store/:id/redeem
- * Body: { childId }
- * Bé đổi quà: kiểm tra XP, trừ XP, tạo redemption với status='requested'.
- */
-router.post('/reward-store/:id/redeem', async (req, res) => {
+router.post('/reward-store/:id/redeem', authenticate, async (req, res) => {
     const { id } = req.params;
     const { childId } = req.body;
+    const childAccess = ensureChildAccess(req, childId);
 
-    if (!childId) {
-        res.status(400).json({ error: 'Thiếu childId' });
+    if (!childAccess.ok) {
+        res.status(childAccess.status).json({ error: childAccess.error });
+        return;
+    }
+    if (req.user?.role !== 'child' && !isAdmin(req)) {
+        res.status(403).json({ error: 'Only child accounts can redeem rewards' });
         return;
     }
 
-    try {
-        // 1. Lấy thông tin phần thưởng
-        const { data: item, error: itemErr } = await supabaseAdmin
-            .from('reward_items')
-            .select('id, parent_id, title, cost_points, is_active, deleted_at')
-            .eq('id', id)
-            .single();
+    const { data, error } = await supabaseAdmin.rpc('redeem_reward_item', {
+        p_reward_item_id: id,
+        p_child_id: childAccess.childId,
+    });
 
-        if (itemErr || !item) {
-            res.status(404).json({ error: 'Không tìm thấy phần thưởng' });
-            return;
-        }
-        if (!item.is_active || item.deleted_at) {
-            res.status(400).json({ error: 'Phần thưởng này hiện không khả dụng' });
-            return;
-        }
-
-        // 2. Lấy XP hiện tại của bé
-        const { data: profile, error: profileErr } = await supabaseAdmin
-            .from('profiles')
-            .select('xp')
-            .eq('id', childId)
-            .single();
-
-        if (profileErr || !profile) {
-            res.status(404).json({ error: 'Không tìm thấy hồ sơ bé' });
-            return;
-        }
-
-        if ((profile.xp ?? 0) < item.cost_points) {
-            res.status(400).json({ error: 'Không đủ XP để đổi phần thưởng này' });
-            return;
-        }
-
-        // 3. Trừ XP
-        const newXp = (profile.xp ?? 0) - item.cost_points;
-        const { error: xpErr } = await supabaseAdmin
-            .from('profiles')
-            .update({ xp: newXp })
-            .eq('id', childId);
-
-        if (xpErr) throw xpErr;
-
-        // 4. Tạo redemption
-        const { error: redemptionErr } = await supabaseAdmin
-            .from('reward_redemptions')
-            .insert({
-                reward_item_id: item.id,
-                child_id: childId,
-                parent_id: item.parent_id,
-                title: item.title,
-                cost_points: item.cost_points,
-                status: 'requested',
-            });
-
-        if (redemptionErr) throw redemptionErr;
-
-        res.json({ xp: newXp });
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
+    if (error) {
+        const mapped = mapRewardRpcError(error.message);
+        res.status(mapped.status).json({ error: mapped.error });
+        return;
     }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    res.json({ xp: result?.xp ?? 0, redemptionId: result?.redemption_id });
 });
 
-// =========================================================
-// REWARD REDEMPTIONS  (reward_redemptions table)
-// =========================================================
-
-/**
- * GET /reward-redemptions
- * Query params:
- *   - childId   → lịch sử đổi quà của bé
- *   - parentId  → tất cả yêu cầu đổi quà dưới quyền parent
- */
-router.get('/reward-redemptions', async (req, res) => {
+router.get('/reward-redemptions', authenticate, async (req, res) => {
     const { childId, parentId } = req.query;
 
     if (!childId && !parentId) {
-        res.status(400).json({ error: 'Cần truyền childId hoặc parentId' });
+        res.status(400).json({ error: 'Provide childId or parentId' });
         return;
     }
 
@@ -252,9 +273,28 @@ router.get('/reward-redemptions', async (req, res) => {
             .order('requested_at', { ascending: false });
 
         if (childId) {
-            query = query.eq('child_id', String(childId));
+            const childAccess = ensureChildAccess(req, String(childId));
+            if (!childAccess.ok) {
+                res.status(childAccess.status).json({ error: childAccess.error });
+                return;
+            }
+
+            if (req.user?.role === 'parent' && !isAdmin(req)) {
+                const relation = await assertChildBelongsToParent(childAccess.childId, req.user.id);
+                if (!relation.ok) {
+                    res.status(relation.status).json({ error: relation.error });
+                    return;
+                }
+            }
+
+            query = query.eq('child_id', childAccess.childId);
         } else {
-            query = query.eq('parent_id', String(parentId));
+            const access = ensureParentAccess(req, parentId);
+            if (!access.ok) {
+                res.status(access.status).json({ error: access.error });
+                return;
+            }
+            query = query.eq('parent_id', access.parentId);
         }
 
         const { data, error } = await query;
@@ -263,145 +303,76 @@ router.get('/reward-redemptions', async (req, res) => {
             res.status(500).json({ error: error.message });
             return;
         }
-        res.json(data);
+        res.json(data ?? []);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }
 });
 
-/**
- * PATCH /reward-redemptions/:id
- * Body: { parentId, status: 'approved' | 'fulfilled' | 'rejected' }
- * Ba/mẹ duyệt hoặc từ chối yêu cầu đổi quà.
- */
-router.patch('/reward-redemptions/:id', async (req, res) => {
+router.patch('/reward-redemptions/:id', authenticate, async (req, res) => {
     const { id } = req.params;
-    const { parentId, status } = req.body;
+    const { parentId, status } = req.body as { parentId?: string; status?: RedemptionStatus };
+    const access = ensureParentAccess(req, parentId);
 
-    if (!parentId || !status) {
-        res.status(400).json({ error: 'Thiếu parentId hoặc status' });
+    if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
         return;
     }
-    if (!['approved', 'fulfilled', 'rejected'].includes(status)) {
-        res.status(400).json({ error: 'status không hợp lệ' });
+    if (!status || !['approved', 'fulfilled', 'rejected'].includes(status)) {
+        res.status(400).json({ error: 'Invalid status' });
         return;
     }
 
-    try {
-        // Kiểm tra redemption thuộc parent này
-        const { data: existing, error: findErr } = await supabaseAdmin
-            .from('reward_redemptions')
-            .select('id, status, child_id, cost_points')
-            .eq('id', id)
-            .eq('parent_id', parentId)
-            .single();
+    const { error: rpcError } = await supabaseAdmin.rpc('update_reward_redemption_status', {
+        p_redemption_id: id,
+        p_parent_id: access.parentId,
+        p_status: status,
+    });
 
-        if (findErr || !existing) {
-            res.status(404).json({ error: 'Không tìm thấy yêu cầu đổi quà' });
-            return;
-        }
-
-        // Nếu rejected: hoàn lại XP cho bé
-        const allowedTransitions: Record<string, string[]> = {
-            requested: ['approved', 'rejected'],
-            approved: ['fulfilled', 'rejected'],
-            fulfilled: [],
-            rejected: [],
-        };
-
-        if (!allowedTransitions[existing.status]?.includes(status)) {
-            res.status(400).json({ error: 'KhÃ´ng thá»ƒ chuyá»ƒn tráº¡ng thÃ¡i yÃªu cáº§u Ä‘á»•i quÃ  nhÆ° váº­y' });
-            return;
-        }
-
-        if (status === 'rejected' && existing.status !== 'rejected') {
-            const { data: childProfile } = await supabaseAdmin
-                .from('profiles')
-                .select('xp')
-                .eq('id', existing.child_id)
-                .single();
-
-            if (childProfile) {
-                await supabaseAdmin
-                    .from('profiles')
-                    .update({ xp: (childProfile.xp ?? 0) + existing.cost_points })
-                    .eq('id', existing.child_id);
-            }
-        }
-
-        const { data, error } = await supabaseAdmin
-            .from('reward_redemptions')
-            .update({
-                status,
-                resolved_at: ['approved', 'fulfilled', 'rejected'].includes(status)
-                    ? new Date().toISOString()
-                    : null,
-            })
-            .eq('id', id)
-            .select('*, profiles!reward_redemptions_child_id_fkey(full_name)')
-            .single();
-
-        if (error) {
-            res.status(500).json({ error: error.message });
-            return;
-        }
-        res.json(data);
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
+    if (rpcError) {
+        const mapped = mapRewardRpcError(rpcError.message);
+        res.status(mapped.status).json({ error: mapped.error });
+        return;
     }
+
+    const { data, error } = await supabaseAdmin
+        .from('reward_redemptions')
+        .select('*, profiles!reward_redemptions_child_id_fkey(full_name)')
+        .eq('id', id)
+        .eq('parent_id', access.parentId)
+        .single();
+
+    if (error || !data) {
+        res.status(500).json({ error: error?.message ?? 'Reward redemption updated but could not be reloaded' });
+        return;
+    }
+
+    res.json(data);
 });
 
-/**
- * PATCH /reward-redemptions/:id/fulfill
- * Body: { childId }
- * Bé xác nhận đã nhận quà → status = 'fulfilled'.
- */
-router.patch('/reward-redemptions/:id/fulfill', async (req, res) => {
+router.patch('/reward-redemptions/:id/fulfill', authenticate, async (req, res) => {
     const { id } = req.params;
-    const { childId } = req.body;
+    const parentId = req.body.parentId ?? req.user?.id;
+    const access = ensureParentAccess(req, parentId);
 
-    if (childId) {
-        res.status(403).json({ error: 'Chá»‰ ba/máº¹ má»›i cÃ³ thá»ƒ xÃ¡c nháº­n Ä‘Ã£ trao quÃ ' });
+    if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
         return;
     }
 
-    if (!childId) {
-        res.status(400).json({ error: 'Thiếu childId' });
+    const { error: rpcError } = await supabaseAdmin.rpc('update_reward_redemption_status', {
+        p_redemption_id: id,
+        p_parent_id: access.parentId,
+        p_status: 'fulfilled',
+    });
+
+    if (rpcError) {
+        const mapped = mapRewardRpcError(rpcError.message);
+        res.status(mapped.status).json({ error: mapped.error });
         return;
     }
 
-    try {
-        const { data: existing, error: findErr } = await supabaseAdmin
-            .from('reward_redemptions')
-            .select('id, status, child_id')
-            .eq('id', id)
-            .eq('child_id', childId)
-            .single();
-
-        if (findErr || !existing) {
-            res.status(404).json({ error: 'Không tìm thấy yêu cầu đổi quà' });
-            return;
-        }
-        if (existing.status !== 'approved') {
-            res.status(400).json({ error: 'Chỉ có thể xác nhận khi quà đã được ba/mẹ duyệt' });
-            return;
-        }
-
-        const { data, error } = await supabaseAdmin
-            .from('reward_redemptions')
-            .update({ status: 'fulfilled', resolved_at: new Date().toISOString() })
-            .eq('id', id)
-            .select()
-            .single();
-
-        if (error) {
-            res.status(500).json({ error: error.message });
-            return;
-        }
-        res.json(data);
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
-    }
+    res.json({ success: true });
 });
 
 export default router;

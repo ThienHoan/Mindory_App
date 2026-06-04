@@ -585,13 +585,13 @@ export const api = {
         },
 
         /** Bé đổi quà: trừ XP và tạo redemption mới với status='requested'. */
-        redeem: async (itemId: string, childId: string): Promise<{ xp: number }> => {
+        redeem: async (itemId: string, childId: string): Promise<{ xp: number; redemptionId?: string }> => {
             const raw = await requestJson<unknown>(`/reward-store/${encodeURIComponent(itemId)}/redeem`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ childId }),
             })
-            return normalizeObjectResponse<{ xp: number }>(raw)
+            return normalizeObjectResponse<{ xp: number; redemptionId?: string }>(raw)
         },
 
         /** Ba/mẹ tạo quà mới trong kho. */
