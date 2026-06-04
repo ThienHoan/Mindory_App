@@ -3,6 +3,15 @@ import { supabaseAdmin } from '../lib/supabase';
 
 const router = Router();
 
+function normalizeSeconds(value: unknown): number | undefined {
+    if (value === undefined || value === null) return undefined;
+
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+
+    return Math.round(seconds);
+}
+
 // POST /sessions/start - Bé bắt đầu học 1 task
 router.post('/start', async (req, res) => {
     const { taskId, childId } = req.body;
@@ -56,6 +65,12 @@ router.post('/start', async (req, res) => {
 router.post('/:id/finish', async (req, res) => {
     const { id } = req.params;
     const { childId, quizScore, quizTotal } = req.body;
+    const activeSeconds = normalizeSeconds(req.body.activeSeconds);
+    const idleSeconds = normalizeSeconds(req.body.idleSeconds);
+    const studySeconds = normalizeSeconds(req.body.studySeconds);
+    const quizSeconds = normalizeSeconds(req.body.quizSeconds);
+    const breakSeconds = normalizeSeconds(req.body.breakSeconds);
+    const gameBreakSeconds = normalizeSeconds(req.body.gameBreakSeconds);
 
     if (!childId) {
         res.status(400).json({ error: 'Missing required field: childId' });
@@ -84,18 +99,29 @@ router.post('/:id/finish', async (req, res) => {
         // Tính focus_minutes chính xác từ started_at
         const startedAt = new Date(session.started_at);
         const endedAt = new Date();
-        const focusMinutes = Math.round((endedAt.getTime() - startedAt.getTime()) / 60000);
+        const focusMinutes = activeSeconds !== undefined
+            ? Math.round(activeSeconds / 60)
+            : Math.round((endedAt.getTime() - startedAt.getTime()) / 60000);
 
         // Cập nhật session
+        const updatePayload: Record<string, any> = {
+            ended_at: endedAt.toISOString(),
+            focus_minutes: focusMinutes,
+            quiz_score: quizScore ?? null,
+            quiz_total: quizTotal ?? null,
+            completed: true,
+        };
+
+        if (activeSeconds !== undefined) updatePayload.active_seconds = activeSeconds;
+        if (idleSeconds !== undefined) updatePayload.idle_seconds = idleSeconds;
+        if (studySeconds !== undefined) updatePayload.study_seconds = studySeconds;
+        if (quizSeconds !== undefined) updatePayload.quiz_seconds = quizSeconds;
+        if (breakSeconds !== undefined) updatePayload.break_seconds = breakSeconds;
+        if (gameBreakSeconds !== undefined) updatePayload.game_break_seconds = gameBreakSeconds;
+
         const { data: updatedSession, error: updateError } = await supabaseAdmin
             .from('learning_sessions')
-            .update({
-                ended_at: endedAt.toISOString(),
-                focus_minutes: focusMinutes,
-                quiz_score: quizScore ?? null,
-                quiz_total: quizTotal ?? null,
-                completed: true,
-            })
+            .update(updatePayload)
             .eq('id', id)
             .select()
             .single();

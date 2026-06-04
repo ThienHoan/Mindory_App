@@ -14,6 +14,11 @@ const createTaskSchema = z.object({
     sessionsPerDay: z.number().int().min(1).max(10).optional().default(1),
     startPage: z.number().int().min(1).optional().default(1),
     endPage: z.number().int().min(1).optional().default(1),
+    assignedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    focusIntervalSeconds: z.number().int().min(60).max(1800).optional(),
+    breakSeconds: z.number().int().min(10).max(300).optional(),
+    gameBreakSeconds: z.number().int().min(10).max(300).optional(),
+    allowGameBreak: z.boolean().optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -22,6 +27,10 @@ const updateTaskSchema = z.object({
     sessionsPerDay: z.number().int().min(1).max(10).optional(),
     startPage: z.number().int().min(1).optional(),
     endPage: z.number().int().min(1).optional(),
+    focusIntervalSeconds: z.number().int().min(60).max(1800).optional(),
+    breakSeconds: z.number().int().min(10).max(300).optional(),
+    gameBreakSeconds: z.number().int().min(10).max(300).optional(),
+    allowGameBreak: z.boolean().optional(),
 }).refine(data => Object.keys(data).length > 1, {
     message: 'At least one field to update must be provided',
 });
@@ -41,11 +50,42 @@ function getPagination(query: any) {
 
 // POST /tasks
 router.post('/', validate(createTaskSchema), async (req, res) => {
-    const { childId, lessonId, parentId, sessionDuration, sessionsPerDay, startPage, endPage } = req.body;
+    const {
+        childId,
+        lessonId,
+        parentId,
+        sessionDuration,
+        sessionsPerDay,
+        startPage,
+        endPage,
+        assignedDate,
+        focusIntervalSeconds,
+        breakSeconds,
+        gameBreakSeconds,
+        allowGameBreak,
+    } = req.body;
+
+    const insertPayload: Record<string, any> = {
+        child_id: childId,
+        lesson_id: lessonId,
+        assigned_by: parentId,
+        session_duration_minutes: sessionDuration,
+        sessions_per_day: sessionsPerDay,
+        start_page: startPage,
+        end_page: endPage,
+        status: 'pending',
+    };
+
+    if (assignedDate !== undefined) insertPayload.assigned_date = assignedDate;
+    if (focusIntervalSeconds !== undefined) insertPayload.focus_interval_seconds = focusIntervalSeconds;
+    if (breakSeconds !== undefined) insertPayload.break_seconds = breakSeconds;
+    if (gameBreakSeconds !== undefined) insertPayload.game_break_seconds = gameBreakSeconds;
+    if (allowGameBreak !== undefined) insertPayload.allow_game_break = allowGameBreak;
+
     try {
         const { data, error } = await supabaseAdmin
             .from('assigned_tasks')
-            .insert({ child_id: childId, lesson_id: lessonId, assigned_by: parentId, session_duration_minutes: sessionDuration, sessions_per_day: sessionsPerDay, start_page: startPage, end_page: endPage, status: 'pending' })
+            .insert(insertPayload)
             .select().single();
         if (error) throw error;
         res.status(201).json(data);
@@ -93,7 +133,17 @@ router.get('/', async (req, res) => {
 // PUT /tasks/:id — Parent sửa bài đã giao
 router.put('/:id', validate(updateTaskSchema), async (req, res) => {
     const { id } = req.params;
-    const { parentId, sessionDuration, sessionsPerDay, startPage, endPage } = req.body;
+    const {
+        parentId,
+        sessionDuration,
+        sessionsPerDay,
+        startPage,
+        endPage,
+        focusIntervalSeconds,
+        breakSeconds,
+        gameBreakSeconds,
+        allowGameBreak,
+    } = req.body;
 
     // Ownership check + cannot edit completed tasks
     const { data: task, error: findError } = await supabaseAdmin
@@ -108,6 +158,10 @@ router.put('/:id', validate(updateTaskSchema), async (req, res) => {
     if (sessionsPerDay !== undefined) updatePayload.sessions_per_day = sessionsPerDay;
     if (startPage !== undefined) updatePayload.start_page = startPage;
     if (endPage !== undefined) updatePayload.end_page = endPage;
+    if (focusIntervalSeconds !== undefined) updatePayload.focus_interval_seconds = focusIntervalSeconds;
+    if (breakSeconds !== undefined) updatePayload.break_seconds = breakSeconds;
+    if (gameBreakSeconds !== undefined) updatePayload.game_break_seconds = gameBreakSeconds;
+    if (allowGameBreak !== undefined) updatePayload.allow_game_break = allowGameBreak;
 
     const { data, error } = await supabaseAdmin
         .from('assigned_tasks').update(updatePayload).eq('id', id).select().single();

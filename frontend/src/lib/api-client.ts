@@ -38,9 +38,14 @@ export interface Task {
     lesson_id: string
     status: 'pending' | 'in_progress' | 'completed'
     session_duration_minutes: number
+    sessions_per_day?: number
     assigned_date?: string
     start_page: number
     end_page: number
+    focus_interval_seconds?: number
+    break_seconds?: number
+    game_break_seconds?: number
+    allow_game_break?: boolean
     lessons?: {
         id?: string
         title: string
@@ -50,6 +55,33 @@ export interface Task {
         total_pages: number
         subjects?: { name: string } | null
     } | null
+}
+
+export interface CreateTaskPayload {
+    childId: string
+    lessonId: string
+    parentId: string
+    sessionDuration?: number
+    sessionsPerDay?: number
+    startPage?: number
+    endPage?: number
+    assignedDate?: string
+    focusIntervalSeconds?: number
+    breakSeconds?: number
+    gameBreakSeconds?: number
+    allowGameBreak?: boolean
+}
+
+export interface FinishSessionPayload {
+    childId: string
+    quizScore?: number
+    quizTotal?: number
+    activeSeconds?: number
+    idleSeconds?: number
+    studySeconds?: number
+    quizSeconds?: number
+    breakSeconds?: number
+    gameBreakSeconds?: number
 }
 
 export interface LessonPdfUrlResult {
@@ -305,7 +337,7 @@ export const api = {
             const raw = await requestJson<unknown>(`/tasks/${id}`, undefined, { cacheMs: 3000 })
             return normalizeObjectResponse<Task>(raw)
         },
-        create: async (data: Record<string, unknown>) => {
+        create: async (data: CreateTaskPayload) => {
             return requestJson('/tasks', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -322,7 +354,7 @@ export const api = {
             })
             return normalizeObjectResponse<SessionStartResult>(raw)
         },
-        finish: async (sessionId: string, data: Record<string, unknown>): Promise<SessionFinishResult> => {
+        finish: async (sessionId: string, data: FinishSessionPayload): Promise<SessionFinishResult> => {
             const raw = await requestJson<unknown>(`/sessions/${sessionId}/finish`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

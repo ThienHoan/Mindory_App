@@ -208,7 +208,7 @@ function QuizContent() {
                     childId,
                     quizScore: finalScore,
                     quizTotal: quizzes.length,
-                    activeSeconds: studyActiveSeconds,
+                    activeSeconds: studyActiveSeconds + quizElapsedSeconds,
                     idleSeconds: studyIdleSeconds,
                     studySeconds: studyActiveSeconds,
                     quizSeconds: quizElapsedSeconds,
