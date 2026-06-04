@@ -10,6 +10,12 @@ import {
 } from '@heroicons/react/24/outline'
 import { createClient } from '@/lib/supabase/client'
 import { api } from '@/lib/api-client'
+import {
+    DEFAULT_SESSION_DURATION,
+    DEFAULT_SESSIONS_PER_DAY,
+    SESSION_DURATION_OPTIONS,
+    SESSIONS_PER_DAY_OPTIONS,
+} from '@/lib/constants/session-options'
 import { cn } from '@/lib/utils'
 
 interface ChildProfile {
@@ -50,8 +56,8 @@ function AssignTaskContent() {
     const [selectedChildren, setSelectedChildren] = useState<string[]>(preSelectedChildId ? [preSelectedChildId] : [])
     const [selectedLessonId, setSelectedLessonId] = useState<string>('')
     const [searchText, setSearchText] = useState('')
-    const [sessionDuration, setSessionDuration] = useState(20)
-    const [sessionsPerDay, setSessionsPerDay] = useState(2)
+    const [sessionDuration, setSessionDuration] = useState(DEFAULT_SESSION_DURATION)
+    const [sessionsPerDay, setSessionsPerDay] = useState(DEFAULT_SESSIONS_PER_DAY)
     const [startPage, setStartPage] = useState(1)
     const [endPage, setEndPage] = useState(1)
     const [scheduleDate, setScheduleDate] = useState(formatDateInputValue(new Date()))
@@ -161,6 +167,11 @@ function AssignTaskContent() {
             return
         }
 
+        if (!scheduleDate) {
+            alert('Vui lòng chọn ngày giao bài.')
+            return
+        }
+
         setIsSubmitting(true)
 
         try {
@@ -180,6 +191,8 @@ function AssignTaskContent() {
                         parentId: user.id,
                         sessionDuration,
                         sessionsPerDay,
+                        assignedDate: scheduleDate,
+                        // TODO: Add parent-facing controlled game break setting after product UX is finalized.
                         startPage,
                         endPage,
                     })
@@ -200,8 +213,8 @@ function AssignTaskContent() {
         setSelectedLessonId('')
         setSearchText('')
         setSelectedChildren(preSelectedChildId ? [preSelectedChildId] : [])
-        setSessionDuration(20)
-        setSessionsPerDay(2)
+        setSessionDuration(DEFAULT_SESSION_DURATION)
+        setSessionsPerDay(DEFAULT_SESSIONS_PER_DAY)
         setScheduleDate(formatDateInputValue(new Date()))
         setStartPage(1)
         setEndPage(1)
@@ -255,7 +268,7 @@ function AssignTaskContent() {
                             disabled={isSubmitting}
                             className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 disabled:opacity-60"
                         >
-                            {isSubmitting ? 'Đang giao...' : 'Assign Now'}
+                            {isSubmitting ? 'Đang giao...' : 'Giao bài ngay'}
                         </button>
                     </div>
                 </div>
@@ -264,7 +277,7 @@ function AssignTaskContent() {
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                 <section className="space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
                     <div>
-                        <h3 className="text-lg font-extrabold text-slate-900">Choose from Library</h3>
+                        <h3 className="text-lg font-extrabold text-slate-900">Chọn bài từ thư viện</h3>
                         <p className="text-xs text-slate-500">Tìm kiếm và chọn bài học để giao.</p>
 
                         <div className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -309,20 +322,20 @@ function AssignTaskContent() {
                 </section>
 
                 <aside className="h-fit rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-4">
-                    <h3 className="text-sm font-black uppercase tracking-[0.2em] text-slate-400">Exercise Summary</h3>
+                    <h3 className="text-sm font-black uppercase tracking-[0.2em] text-slate-400">Tóm tắt bài giao</h3>
 
                     <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-violet-500">Selected Item</p>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-violet-500">Bài đã chọn</p>
                         {selectedLesson ? (
                             <>
                                 <p className="mt-2 text-sm font-bold text-slate-900">{selectedLesson.title}</p>
                                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                                     <div className="rounded-lg border border-violet-200 bg-white p-2">
-                                        <p className="text-slate-500">Estimate Time</p>
-                                        <p className="font-bold text-slate-900">{estimateMinutes} mins</p>
+                                        <p className="text-slate-500">Tổng thời gian ước tính</p>
+                                        <p className="font-bold text-slate-900">{estimateMinutes} phút</p>
                                     </div>
                                     <div className="rounded-lg border border-violet-200 bg-white p-2">
-                                        <p className="text-slate-500">Points Reward</p>
+                                        <p className="text-slate-500">XP dự kiến</p>
                                         <p className="font-bold text-amber-600">+{estimatePoints} XP</p>
                                     </div>
                                 </div>
@@ -333,7 +346,7 @@ function AssignTaskContent() {
                     </div>
 
                     <div className="mt-4 space-y-3">
-                        <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-400">Assign to Children</p>
+                        <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-400">Giao cho bé</p>
                         {children.length === 0 && <p className="text-xs text-slate-500">Chưa có hồ sơ bé nào.</p>}
                         {children.map((child) => {
                             const checked = selectedChildren.includes(child.id)
@@ -366,7 +379,7 @@ function AssignTaskContent() {
                     </div>
 
                     <div className="mt-4 space-y-3">
-                        <label className="block text-xs font-bold uppercase tracking-[0.15em] text-slate-400">Schedule Start</label>
+                        <label className="block text-xs font-bold uppercase tracking-[0.15em] text-slate-400">Ngày giao</label>
                         <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2">
                             <CalendarDaysIcon className="h-4 w-4 text-slate-400" />
                             <input
@@ -385,9 +398,11 @@ function AssignTaskContent() {
                                     onChange={(event) => setSessionDuration(Number(event.target.value))}
                                     className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm font-semibold text-slate-700"
                                 >
-                                    <option value={10}>10 phút</option>
-                                    <option value={20}>20 phút</option>
-                                    <option value={30}>30 phút</option>
+                                    {SESSION_DURATION_OPTIONS.map((duration) => (
+                                        <option key={duration} value={duration}>
+                                            {duration} phút
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
                             <div>
@@ -397,11 +412,20 @@ function AssignTaskContent() {
                                     onChange={(event) => setSessionsPerDay(Number(event.target.value))}
                                     className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm font-semibold text-slate-700"
                                 >
-                                    <option value={1}>1</option>
-                                    <option value={2}>2</option>
-                                    <option value={3}>3</option>
+                                    {SESSIONS_PER_DAY_OPTIONS.map((count) => (
+                                        <option key={count} value={count}>
+                                            {count}
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
+                        </div>
+
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                            <p className="text-xs font-bold text-amber-700">Game giải lao</p>
+                            <p className="mt-1 text-xs leading-5 text-amber-700">
+                                Game giải lao ngắn giúp bé reset, hệ thống sẽ tự kéo bé quay lại bài.
+                            </p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
@@ -434,7 +458,7 @@ function AssignTaskContent() {
                         disabled={isSubmitting}
                         className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-60"
                     >
-                        {isSubmitting ? 'Đang giao bài...' : 'Assign Now'}
+                        {isSubmitting ? 'Đang giao bài...' : 'Giao bài ngay'}
                         {!isSubmitting && <CheckCircleIcon className="h-4 w-4" />}
                     </button>
 
