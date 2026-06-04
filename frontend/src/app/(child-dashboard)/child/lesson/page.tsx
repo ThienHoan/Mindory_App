@@ -7,6 +7,8 @@ import { Document, Page, pdfjs } from 'react-pdf'
 import { createClient } from '@/lib/supabase/client'
 import { api, Lesson, Subject, Task } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
+import { buildSessionPolicy } from '@/lib/learning/session-policy'
+import { LearningSessionProgress, loadLearningSessionProgress } from '@/lib/learning/session-storage'
 
 type TaskItem = Task
 
@@ -22,6 +24,12 @@ function normalizeSubjectName(name: string) {
 function isCoreSubject(name: string) {
     const normalized = normalizeSubjectName(name)
     return CORE_SUBJECT_KEYS.some((key) => normalized.includes(key))
+}
+
+function formatTime(seconds: number) {
+    const mm = Math.floor(seconds / 60)
+    const ss = seconds % 60
+    return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
 
@@ -188,6 +196,7 @@ function LessonContent() {
     const [detailSource, setDetailSource] = useState<'task' | 'free' | null>(null)
     const [detailTask, setDetailTask] = useState<TaskItem | null>(null)
     const [detailLesson, setDetailLesson] = useState<Lesson | null>(null)
+    const [detailProgress, setDetailProgress] = useState<LearningSessionProgress | null>(null)
     const [quizCount, setQuizCount] = useState(0)
 
     useEffect(() => {
@@ -241,6 +250,7 @@ function LessonContent() {
                     setDetailSource('task')
                     setDetailTask(task)
                     setDetailLesson(lesson)
+                    setDetailProgress(loadLearningSessionProgress(task.id))
                     setQuizCount(Array.isArray(quizzes) ? quizzes.length : 0)
                     return
                 }
@@ -252,6 +262,7 @@ function LessonContent() {
                     ])
                     setDetailSource('free')
                     setDetailTask(null)
+                    setDetailProgress(null)
                     setDetailLesson(lesson)
                     setQuizCount(Array.isArray(quizzes) ? quizzes.length : 0)
                     return
@@ -432,6 +443,16 @@ function LessonContent() {
     }
 
     const isTaskCompleted = detailSource === 'task' && detailTask?.status === 'completed'
+    const taskPolicy = detailTask
+        ? buildSessionPolicy({ durationMinutes: detailTask.session_duration_minutes, assigned: true, mode: 'assigned-quiz' })
+        : null
+    const requiredActiveSeconds = taskPolicy ? taskPolicy.minActiveBeforeQuizSeconds : 0
+    const taskActiveSeconds = detailProgress?.activeSeconds ?? 0
+    const canStartTaskQuiz = detailSource !== 'task' || isTaskCompleted || taskActiveSeconds >= requiredActiveSeconds
+    const taskStudyHref = detailTask ? `/child/lesson/study?taskId=${detailTask.id}` : '/child/lesson'
+    const quizHref = detailSource === 'task' && detailTask
+        ? `/child/quiz?taskId=${detailTask.id}&lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}&duration=${detailTask.session_duration_minutes}`
+        : `/child/quiz?lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}`
 
     return (
         <div className="max-w-5xl mx-auto p-8 space-y-6">
@@ -495,6 +516,9 @@ function LessonContent() {
                             <p className="text-xs font-black text-purple-500 uppercase tracking-widest">Session</p>
                             <p className="text-sm font-bold text-purple-800 mt-1">Trang {detailTask.start_page} - {detailTask.end_page}</p>
                             <p className="text-xs text-purple-500 mt-1">Pomodoro: {detailTask.session_duration_minutes} phút</p>
+                            {!isTaskCompleted && (
+                                <p className="text-xs text-purple-500 mt-1">Active: {formatTime(taskActiveSeconds)} / {formatTime(requiredActiveSeconds)}</p>
+                            )}
                         </div>
                     )}
 
@@ -512,19 +536,24 @@ function LessonContent() {
                         )}
                     </div>
 
-                    <Link
-                        href={
-                            detailSource === 'task' && detailTask
-                                ? `/child/quiz?taskId=${detailTask.id}&lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}&duration=${detailTask.session_duration_minutes}`
-                                : `/child/quiz?lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}`
-                        }
-                        className={cn(
-                            'w-full inline-flex justify-center py-3.5 rounded-2xl font-black text-sm transition-all',
-                            quizCount > 0 ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-200' : 'bg-gray-100 text-gray-400 pointer-events-none'
-                        )}
-                    >
-                        {isTaskCompleted ? 'Làm lại kiểm tra' : 'Bắt đầu kiểm tra'}
-                    </Link>
+                    {canStartTaskQuiz ? (
+                        <Link
+                            href={quizHref}
+                            className={cn(
+                                'w-full inline-flex justify-center py-3.5 rounded-2xl font-black text-sm transition-all',
+                                quizCount > 0 ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-200' : 'bg-gray-100 text-gray-400 pointer-events-none'
+                            )}
+                        >
+                            {isTaskCompleted ? 'Làm lại kiểm tra' : 'Bắt đầu kiểm tra'}
+                        </Link>
+                    ) : (
+                        <Link
+                            href={taskStudyHref}
+                            className="w-full inline-flex justify-center py-3.5 rounded-2xl bg-blue-600 text-white font-black text-sm shadow-lg shadow-blue-100 hover:bg-blue-700"
+                        >
+                            Cần học thêm {formatTime(requiredActiveSeconds - taskActiveSeconds)}
+                        </Link>
+                    )}
 
                     {quizCount === 0 && <p className="text-xs font-bold text-red-400 text-center">Bài học này chưa có câu hỏi để kiểm tra.</p>}
                 </div>

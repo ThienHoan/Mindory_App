@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, use } from 'react'
+import { useCallback, useEffect, useMemo, useState, use } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, CheckCircle, XCircle, Play, Share2, Pencil, Trash2, Plus, Save } from 'lucide-react'
 import { AIAssignment, AIQuizDocument, AIQuizQuestion, api } from '@/lib/api-client'
@@ -43,7 +43,7 @@ function validateDraft(draft: QuestionDraft) {
 
 export default function ReviewQuizPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params)
-    const supabase = createClient()
+    const supabase = useMemo(() => createClient(), [])
     const [document, setDocument] = useState<AIQuizDocument | null>(null)
     const [questions, setQuestions] = useState<AIQuizQuestion[]>([])
     const [loading, setLoading] = useState(true)
@@ -80,6 +80,23 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
         // eslint-disable-next-line react-hooks/set-state-in-effect
         void loadData()
     }, [loadData])
+
+    useEffect(() => {
+        const channel = supabase
+            .channel(`parent-ai-assignment-${id}`)
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'assigned_ai_quizzes', filter: `document_id=eq.${id}` },
+                () => {
+                    void loadData()
+                }
+            )
+            .subscribe()
+
+        return () => {
+            void supabase.removeChannel(channel)
+        }
+    }, [id, loadData, supabase])
 
     useEffect(() => {
         let active = true
@@ -214,6 +231,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     }
 
     const approvedCount = questions.filter((q) => q.status === 'approved').length
+    const completedAssignments = assignments.filter((assignment) => assignment.status === 'completed').length
     const childQuizPath = `/child/pdf-quiz/${id}`
     const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}${childQuizPath}` : ''
 
@@ -325,6 +343,10 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                 )}
                 {assignments.length > 0 && (
                     <div className="mt-4 space-y-2">
+                        <div className="flex flex-wrap gap-2 text-xs font-black">
+                            <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">Đã giao {assignments.length} bé</span>
+                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Đã làm {completedAssignments}/{assignments.length}</span>
+                        </div>
                         {assignments.map((assignment) => (
                             <div key={assignment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                                 <div className="font-medium text-slate-700">
@@ -333,7 +355,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                                 <div className="flex items-center gap-3 text-xs text-slate-500">
                                     <span>{new Date(assignment.assigned_at).toLocaleDateString('vi-VN')}</span>
                                     <span className={assignment.status === 'completed' ? 'text-emerald-600' : 'text-amber-600'}>
-                                        {assignment.status === 'completed' ? 'Đã hoàn thành' : 'Đang giao'}
+                                        {assignment.status === 'completed' ? 'Đã hoàn thành' : 'Chưa làm'}
                                     </span>
                                 </div>
                             </div>

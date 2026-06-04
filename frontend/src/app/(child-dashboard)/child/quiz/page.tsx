@@ -2,10 +2,12 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { AIAssignment, api, Lesson, Quiz, Subject, Task } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
+import { DEFAULT_FREE_QUIZ_SECONDS, SessionPolicy, buildSessionPolicy } from '@/lib/learning/session-policy'
+import { clearLearningSessionProgress, loadLearningSessionProgress, saveLearningSessionProgress } from '@/lib/learning/session-storage'
 
 type TaskItem = Task
 
@@ -25,10 +27,6 @@ const ACTIVE_SESSION_PREFIX = 'mindory:active-session:'
 
 type PomodoroPhase = 'quiz' | 'choice' | 'game' | 'break'
 
-const POMODORO_TOTAL_SECONDS = 10 * 60
-const FOCUS_INTERVAL_SECONDS = 5 * 60
-const GAME_PHASE_SECONDS = 60
-const BREAK_PHASE_SECONDS = 30
 const RANDOM_GAME_VIEWS = ['memory', 'maze', 'music'] as const
 
 function getSessionKey(taskId: string) {
@@ -134,6 +132,7 @@ function ResultScreen({
 
 function QuizContent() {
     const searchParams = useSearchParams()
+    const router = useRouter()
     const supabase = useMemo(() => createClient(), [])
 
     const subjectIdFilter = searchParams.get('subjectId')
@@ -143,6 +142,9 @@ function QuizContent() {
     const aiDocumentId = searchParams.get('aiDocumentId') || searchParams.get('documentId')
     const lessonTitle = searchParams.get('lessonTitle') || 'Kiểm tra bài học'
     const isAiQuiz = Boolean(aiDocumentId)
+    const rawDurationMinutes = Number(searchParams.get('duration'))
+    const durationQueryMinutes = Number.isFinite(rawDurationMinutes) && rawDurationMinutes > 0 ? rawDurationMinutes : null
+    const defaultPolicy = useMemo<SessionPolicy>(() => buildSessionPolicy({ mode: 'free-quiz' }), [])
 
     const [loading, setLoading] = useState(true)
     const [submitting, setSubmitting] = useState(false)
@@ -157,9 +159,10 @@ function QuizContent() {
 
     const [quizzes, setQuizzes] = useState<Quiz[]>([])
     const [sessionId, setSessionId] = useState<string | null>(null)
-    const [sessionTotalSeconds, setSessionTotalSeconds] = useState(POMODORO_TOTAL_SECONDS)
-    const [totalSecondsRemaining, setTotalSecondsRemaining] = useState(POMODORO_TOTAL_SECONDS)
-    const [focusSecondsRemaining, setFocusSecondsRemaining] = useState(FOCUS_INTERVAL_SECONDS)
+    const [sessionPolicy, setSessionPolicy] = useState<SessionPolicy>(defaultPolicy)
+    const [sessionTotalSeconds, setSessionTotalSeconds] = useState(DEFAULT_FREE_QUIZ_SECONDS)
+    const [totalSecondsRemaining, setTotalSecondsRemaining] = useState(DEFAULT_FREE_QUIZ_SECONDS)
+    const [focusSecondsRemaining, setFocusSecondsRemaining] = useState(defaultPolicy.focusIntervalSeconds)
     const [focusBreakPending, setFocusBreakPending] = useState(false)
     const [phase, setPhase] = useState<PomodoroPhase>('quiz')
     const [phaseSecondsRemaining, setPhaseSecondsRemaining] = useState(0)
@@ -175,6 +178,11 @@ function QuizContent() {
     const [rewardType, setRewardType] = useState<'game' | 'music' | null>(null)
     const [rewardMinutes, setRewardMinutes] = useState(0)
     const [xpAwarded, setXpAwarded] = useState(0)
+    const [studyActiveSeconds, setStudyActiveSeconds] = useState(0)
+    const [studyIdleSeconds, setStudyIdleSeconds] = useState(0)
+    const [quizElapsedSeconds, setQuizElapsedSeconds] = useState(0)
+    const [breakElapsedSeconds, setBreakElapsedSeconds] = useState(0)
+    const [gameBreakElapsedSeconds, setGameBreakElapsedSeconds] = useState(0)
 
     const handleFinish = useCallback(async () => {
         setFinished(true)
@@ -200,6 +208,12 @@ function QuizContent() {
                     childId,
                     quizScore: finalScore,
                     quizTotal: quizzes.length,
+                    activeSeconds: studyActiveSeconds,
+                    idleSeconds: studyIdleSeconds,
+                    studySeconds: studyActiveSeconds,
+                    quizSeconds: quizElapsedSeconds,
+                    breakSeconds: breakElapsedSeconds,
+                    gameBreakSeconds: gameBreakElapsedSeconds,
                 })
 
                 try {
@@ -207,6 +221,7 @@ function QuizContent() {
                 } catch {
                     // ignore localStorage failure
                 }
+                clearLearningSessionProgress(taskId)
 
                 if (result?.reward) {
                     setRewardType(result.reward.reward_type)
@@ -219,7 +234,7 @@ function QuizContent() {
                 setSubmitting(false)
             }
         }
-    }, [aiAssignmentId, answers, childId, quizzes, sessionId, taskId])
+    }, [aiAssignmentId, answers, breakElapsedSeconds, childId, gameBreakElapsedSeconds, quizzes, quizElapsedSeconds, sessionId, studyActiveSeconds, studyIdleSeconds, taskId])
 
     useEffect(() => {
         async function load() {
@@ -296,26 +311,46 @@ function QuizContent() {
                 }
 
                 const task = taskId ? await api.tasks.get(taskId) : null
+                const nextPolicy = buildSessionPolicy({
+                    durationMinutes: task?.session_duration_minutes ?? durationQueryMinutes,
+                    assigned: Boolean(taskId || aiAssignmentId),
+                    mode: taskId || aiAssignmentId ? 'assigned-quiz' : 'free-quiz',
+                })
+                const sharedProgress = taskId ? loadLearningSessionProgress(taskId) : null
+                const sharedActiveSeconds = sharedProgress?.activeSeconds ?? 0
 
-                setSessionTotalSeconds(POMODORO_TOTAL_SECONDS)
-                setTotalSecondsRemaining(POMODORO_TOTAL_SECONDS)
-                setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
+                if (taskId && task?.status !== 'completed' && sharedActiveSeconds < nextPolicy.minActiveBeforeQuizSeconds) {
+                    router.replace(`/child/lesson/study?taskId=${encodeURIComponent(taskId)}`)
+                    return
+                }
+
+                setSessionPolicy(nextPolicy)
+                setSessionTotalSeconds(nextPolicy.sessionTotalSeconds)
+                setTotalSecondsRemaining(nextPolicy.sessionTotalSeconds)
+                setFocusSecondsRemaining(nextPolicy.focusIntervalSeconds)
                 setFocusBreakPending(false)
                 setPhase('quiz')
                 setPhaseSecondsRemaining(0)
                 setCycleCount(1)
                 setGameView(pickRandomGameView())
                 setGameSeed(Date.now())
+                setStudyActiveSeconds(sharedProgress?.activeSeconds ?? 0)
+                setStudyIdleSeconds(sharedProgress?.idleSeconds ?? 0)
+                setQuizElapsedSeconds(sharedProgress?.quizSeconds ?? 0)
+                setBreakElapsedSeconds(sharedProgress?.breakSeconds ?? 0)
+                setGameBreakElapsedSeconds(sharedProgress?.gameBreakSeconds ?? 0)
 
                 if (taskId) {
                     if (task?.status !== 'completed') {
-                        let activeSessionId: string | null = null
+                        let activeSessionId: string | null = sharedProgress?.sessionId ?? null
                         const key = getSessionKey(taskId)
 
-                        try {
-                            activeSessionId = window.localStorage.getItem(key)
-                        } catch {
-                            activeSessionId = null
+                        if (!activeSessionId) {
+                            try {
+                                activeSessionId = window.localStorage.getItem(key)
+                            } catch {
+                                activeSessionId = null
+                            }
                         }
 
                         if (!activeSessionId) {
@@ -330,6 +365,18 @@ function QuizContent() {
                             }
                         }
 
+                        if (activeSessionId) {
+                            saveLearningSessionProgress(taskId, {
+                                sessionId: activeSessionId,
+                                activeSeconds: sharedActiveSeconds,
+                                idleSeconds: sharedProgress?.idleSeconds ?? 0,
+                                studySeconds: sharedActiveSeconds,
+                                quizSeconds: sharedProgress?.quizSeconds ?? 0,
+                                breakSeconds: sharedProgress?.breakSeconds ?? 0,
+                                gameBreakSeconds: sharedProgress?.gameBreakSeconds ?? 0,
+                            })
+                        }
+
                         setSessionId(activeSessionId)
                     }
                 }
@@ -341,13 +388,14 @@ function QuizContent() {
         }
 
         load()
-    }, [aiDocumentId, lessonId, supabase, taskId])
+    }, [aiAssignmentId, aiDocumentId, durationQueryMinutes, lessonId, router, supabase, taskId])
 
     const hasQuizSession = Boolean(lessonId || aiDocumentId)
 
     useEffect(() => {
-        if (!hasQuizSession || loading || finished) return
+        if (!hasQuizSession || loading || finished || phase !== 'quiz') return
         const timer = window.setInterval(() => {
+            setQuizElapsedSeconds((prev) => prev + 1)
             setTotalSecondsRemaining((prev) => {
                 if (prev <= 1) {
                     window.clearInterval(timer)
@@ -358,7 +406,7 @@ function QuizContent() {
         }, 1000)
 
         return () => window.clearInterval(timer)
-    }, [finished, hasQuizSession, loading])
+    }, [finished, hasQuizSession, loading, phase])
 
     useEffect(() => {
         if (hasQuizSession && totalSecondsRemaining === 0 && !finished && !loading) {
@@ -388,6 +436,11 @@ function QuizContent() {
     useEffect(() => {
         if (!hasQuizSession || loading || finished || (phase !== 'break' && phase !== 'game')) return
         const timer = window.setInterval(() => {
+            if (phase === 'game') {
+                setGameBreakElapsedSeconds((prev) => prev + 1)
+            } else {
+                setBreakElapsedSeconds((prev) => prev + 1)
+            }
             setPhaseSecondsRemaining((prev) => {
                 if (prev <= 1) {
                     window.clearInterval(timer)
@@ -403,7 +456,13 @@ function QuizContent() {
     useEffect(() => {
         if (!hasQuizSession || loading || finished || (phase !== 'break' && phase !== 'game') || phaseSecondsRemaining > 0) return
         const timer = window.setTimeout(() => {
-            setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
+            if (phase === 'game') {
+                setPhase('break')
+                setPhaseSecondsRemaining(Math.min(sessionPolicy.breakSeconds, Math.max(1, totalSecondsRemaining)))
+                return
+            }
+
+            setFocusSecondsRemaining(sessionPolicy.focusIntervalSeconds)
             setFocusBreakPending(false)
             setPhase('quiz')
             setSelected(null)
@@ -411,7 +470,7 @@ function QuizContent() {
             setCycleCount((prev) => prev + 1)
         }, 0)
         return () => window.clearTimeout(timer)
-    }, [finished, hasQuizSession, loading, phase, phaseSecondsRemaining])
+    }, [finished, hasQuizSession, loading, phase, phaseSecondsRemaining, sessionPolicy.breakSeconds, sessionPolicy.focusIntervalSeconds, totalSecondsRemaining])
 
     useEffect(() => {
         if (!hasQuizSession || loading || finished || phase !== 'game') return
@@ -420,12 +479,25 @@ function QuizContent() {
             const data = event.data as { type?: string } | null
             if (!data || data.type !== 'mindory:game-complete') return
             setPhase('break')
-            setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
+            setPhaseSecondsRemaining(Math.min(sessionPolicy.breakSeconds, Math.max(1, totalSecondsRemaining)))
         }
 
         window.addEventListener('message', onGameComplete)
         return () => window.removeEventListener('message', onGameComplete)
-    }, [finished, hasQuizSession, loading, phase, totalSecondsRemaining])
+    }, [finished, hasQuizSession, loading, phase, sessionPolicy.breakSeconds, totalSecondsRemaining])
+
+    useEffect(() => {
+        if (!taskId || loading || finished) return
+        saveLearningSessionProgress(taskId, {
+            sessionId,
+            activeSeconds: studyActiveSeconds,
+            idleSeconds: studyIdleSeconds,
+            studySeconds: studyActiveSeconds,
+            quizSeconds: quizElapsedSeconds,
+            breakSeconds: breakElapsedSeconds,
+            gameBreakSeconds: gameBreakElapsedSeconds,
+        })
+    }, [breakElapsedSeconds, finished, gameBreakElapsedSeconds, loading, quizElapsedSeconds, sessionId, studyActiveSeconds, studyIdleSeconds, taskId])
 
     const filteredSubjects = useMemo(() => {
         if (!subjectIdFilter) return subjects
@@ -438,6 +510,8 @@ function QuizContent() {
     const progressPct = quizzes.length > 0 ? Math.round((answeredCount / quizzes.length) * 100) : 0
     const isCorrect = selected !== null && quiz ? selected === quiz.correct_index : false
     const isQuizPhase = phase === 'quiz'
+    const focusMinutesLabel = Math.max(1, Math.round(sessionPolicy.focusIntervalSeconds / 60))
+    const isAssignedQuizFlow = Boolean(taskId || aiAssignmentId)
     const phaseLabel = phase === 'quiz' ? 'Làm câu hỏi' : phase === 'choice' ? 'Chọn nghỉ' : phase === 'game' ? 'Mini game' : 'Giải lao'
 
     const handleConfirm = () => {
@@ -464,12 +538,12 @@ function QuizContent() {
 
     const startBreak = () => {
         setPhase('break')
-        setPhaseSecondsRemaining(Math.min(BREAK_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
+        setPhaseSecondsRemaining(Math.min(sessionPolicy.breakSeconds, Math.max(1, totalSecondsRemaining)))
     }
 
     const startMiniGame = () => {
         setPhase('game')
-        setPhaseSecondsRemaining(Math.min(GAME_PHASE_SECONDS, Math.max(1, totalSecondsRemaining)))
+        setPhaseSecondsRemaining(Math.min(sessionPolicy.gameBreakSeconds, Math.max(1, totalSecondsRemaining)))
         setGameView(pickRandomGameView())
         setGameSeed(Date.now())
     }
@@ -492,13 +566,16 @@ function QuizContent() {
         setRewardMinutes(0)
         setXpAwarded(0)
         setTotalSecondsRemaining(sessionTotalSeconds)
-        setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
+        setFocusSecondsRemaining(sessionPolicy.focusIntervalSeconds)
         setFocusBreakPending(false)
         setPhase('quiz')
         setPhaseSecondsRemaining(0)
         setCycleCount(1)
         setGameView(pickRandomGameView())
         setGameSeed(Date.now())
+        setQuizElapsedSeconds(0)
+        setBreakElapsedSeconds(0)
+        setGameBreakElapsedSeconds(0)
     }
 
     if (loading) {
@@ -566,7 +643,7 @@ function QuizContent() {
                                     <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{assignment.pdf_documents?.title ?? 'Bài AI'}</h3>
                                     <p className="text-sm text-gray-500 mt-1 line-clamp-2">Bố mẹ đã giao bài AI này cho bé.</p>
                                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                                        <p className="text-xs font-bold text-gray-500">Pomodoro: {Math.round(POMODORO_TOTAL_SECONDS / 60)} phút</p>
+                                        <p className="text-xs font-bold text-gray-500">Pomodoro: {Math.round(buildSessionPolicy({ mode: 'assigned-quiz' }).sessionTotalSeconds / 60)} phút</p>
                                         <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">+{COMPLETION_XP} XP</span>
                                     </div>
                                     <Link
@@ -693,7 +770,7 @@ function QuizContent() {
                     <p className="text-[11px] font-black uppercase tracking-widest text-indigo-500">Luồng Pomodoro Xen Kẽ</p>
                     <p className="text-sm font-black text-indigo-900 mt-1">Pha hiện tại: {phaseLabel}</p>
                     <p className="text-xs font-bold text-indigo-700 mt-1">
-                        Sau 5 phút tập trung, bé được chọn nghỉ 30 giây hoặc chơi game 60 giây sau khi xong câu hiện tại.
+                        Sau {focusMinutesLabel} phút tập trung, bé được chọn nghỉ {sessionPolicy.breakSeconds} giây hoặc chơi game {sessionPolicy.gameBreakSeconds} giây sau khi xong câu hiện tại{isAssignedQuizFlow ? '. Đây chỉ là nghỉ ngắn, không phải phần thưởng chính.' : '.'}
                     </p>
                 </div>
                 <div className="text-right">
@@ -724,10 +801,10 @@ function QuizContent() {
                     <p className="mt-2 text-sm font-bold text-slate-500">Chọn một khoảng ngắn để đầu óc nhẹ hơn rồi quay lại câu tiếp theo.</p>
                     <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <button onClick={startBreak} className="rounded-2xl bg-sky-500 px-5 py-5 text-base font-black text-white hover:bg-sky-600">
-                            Nghỉ 30 giây
+                            Nghỉ {sessionPolicy.breakSeconds} giây
                         </button>
                         <button onClick={startMiniGame} className="rounded-2xl bg-amber-500 px-5 py-5 text-base font-black text-white hover:bg-amber-600">
-                            Chơi game 60 giây
+                            Chơi game {sessionPolicy.gameBreakSeconds} giây
                         </button>
                     </div>
                 </div>

@@ -1,19 +1,38 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Plus, FileText, CheckCircle, Clock, AlertCircle } from 'lucide-react'
-import { api } from '@/lib/api-client'
+import { api, AIAssignment } from '@/lib/api-client'
+import { createClient } from '@/lib/supabase/client'
 
 export default function PDFQuizDashboard() {
     const [documents, setDocuments] = useState<any[]>([])
+    const [assignments, setAssignments] = useState<AIAssignment[]>([])
     const [loading, setLoading] = useState(true)
     const router = useRouter()
+    const supabase = useMemo(() => createClient(), [])
+
+    const loadDocuments = useCallback(async (showLoading = true) => {
+        if (showLoading) setLoading(true)
+        try {
+            const [data, assignmentData] = await Promise.all([
+                api.aiQuizzes.listDocuments(),
+                api.aiAssignments.listParent(),
+            ])
+            setDocuments(data)
+            setAssignments(assignmentData)
+        } catch (error) {
+            console.error('Failed to load documents:', error)
+        } finally {
+            if (showLoading) setLoading(false)
+        }
+    }, [])
 
     useEffect(() => {
         loadDocuments()
-    }, [])
+    }, [loadDocuments])
 
     useEffect(() => {
         const hasProcessing = documents.some(doc => doc.status === 'processing');
@@ -24,19 +43,20 @@ export default function PDFQuizDashboard() {
         }, 5000);
 
         return () => clearInterval(intervalId);
-    }, [documents])
+    }, [documents, loadDocuments])
 
-    const loadDocuments = async (showLoading = true) => {
-        if (showLoading) setLoading(true)
-        try {
-            const data = await api.aiQuizzes.listDocuments()
-            setDocuments(data)
-        } catch (error) {
-            console.error('Failed to load documents:', error)
-        } finally {
-            if (showLoading) setLoading(false)
+    useEffect(() => {
+        const channel = supabase
+            .channel('parent-ai-assignments-dashboard')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'assigned_ai_quizzes' }, () => {
+                void loadDocuments(false)
+            })
+            .subscribe()
+
+        return () => {
+            void supabase.removeChannel(channel)
         }
-    }
+    }, [loadDocuments, supabase])
 
     return (
         <div className="space-y-6">
@@ -69,7 +89,10 @@ export default function PDFQuizDashboard() {
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {documents.map((doc) => (
+                    {documents.map((doc) => {
+                        const docAssignments = assignments.filter((assignment) => assignment.document_id === doc.id)
+                        const completedCount = docAssignments.filter((assignment) => assignment.status === 'completed').length
+                        return (
                         <div key={doc.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
                             <div className="p-5 flex-grow">
                                 <h3 className="font-semibold text-lg text-slate-800 mb-2 line-clamp-2" title={doc.title}>
@@ -97,6 +120,16 @@ export default function PDFQuizDashboard() {
                                         year: 'numeric', month: 'long', day: 'numeric'
                                     })}
                                 </div>
+                                <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs font-bold">
+                                    <div className="rounded-lg bg-indigo-50 px-2 py-2 text-indigo-700">
+                                        <p className="text-[10px] uppercase text-indigo-400">Đã giao</p>
+                                        <p>{docAssignments.length} bé</p>
+                                    </div>
+                                    <div className="rounded-lg bg-emerald-50 px-2 py-2 text-emerald-700">
+                                        <p className="text-[10px] uppercase text-emerald-400">Đã làm</p>
+                                        <p>{completedCount}/{docAssignments.length}</p>
+                                    </div>
+                                </div>
                             </div>
                             <div className="bg-slate-50 px-5 py-3 border-t border-slate-100">
                                 {doc.status === 'completed' ? (
@@ -113,7 +146,7 @@ export default function PDFQuizDashboard() {
                                 )}
                             </div>
                         </div>
-                    ))}
+                    )})}
                 </div>
             )}
         </div>

@@ -33,6 +33,16 @@ interface LessonItem {
     total_pages: number
 }
 
+type AssignedTaskView = Task & {
+    childName?: string | null
+}
+
+const taskStatusStyle: Record<Task['status'], { label: string; className: string }> = {
+    pending: { label: 'Chưa làm', className: 'bg-amber-50 text-amber-700 border-amber-100' },
+    in_progress: { label: 'Đang học', className: 'bg-blue-50 text-blue-700 border-blue-100' },
+    completed: { label: 'Đã hoàn thành', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+}
+
 function formatDateInputValue(value: Date) {
     const year = value.getFullYear()
     const month = String(value.getMonth() + 1).padStart(2, '0')
@@ -43,12 +53,13 @@ function formatDateInputValue(value: Date) {
 function AssignTaskContent() {
     const searchParams = useSearchParams()
     const router = useRouter()
-    const supabase = createClient()
+    const supabase = useMemo(() => createClient(), [])
 
     const preSelectedChildId = searchParams.get('childId')
 
     const [children, setChildren] = useState<ChildProfile[]>([])
     const [lessons, setLessons] = useState<LessonItem[]>([])
+    const [assignedTasks, setAssignedTasks] = useState<AssignedTaskView[]>([])
     const [loadingData, setLoadingData] = useState(true)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [isSuccess, setIsSuccess] = useState(false)
@@ -64,6 +75,17 @@ function AssignTaskContent() {
 
     useEffect(() => {
         let isMounted = true
+
+        async function loadAssignedTasks(nextChildren: ChildProfile[]) {
+            const taskGroups = await Promise.all(
+                nextChildren.map(async (child) => {
+                    const response = await api.tasks.listForParentChild(child.id)
+                    return response.data.map((task) => ({ ...task, childName: child.full_name || child.email }))
+                })
+            )
+
+            return taskGroups.flat()
+        }
 
         async function fetchData() {
             try {
@@ -87,7 +109,8 @@ function AssignTaskContent() {
 
                 if (!isMounted) return
 
-                setChildren((childrenResponse.data as ChildProfile[] | null) ?? [])
+                const nextChildren = (childrenResponse.data as ChildProfile[] | null) ?? []
+                setChildren(nextChildren)
 
                 const normalizedLessons = (lessonsResponse.data ?? []).map((lesson) => ({
                     id: lesson.id,
@@ -98,6 +121,10 @@ function AssignTaskContent() {
                 }))
 
                 setLessons(normalizedLessons)
+
+                const nextAssignedTasks = await loadAssignedTasks(nextChildren)
+                if (!isMounted) return
+                setAssignedTasks(nextAssignedTasks)
             } catch (error) {
                 console.error('Error fetching assign page data:', error)
             } finally {
@@ -111,6 +138,31 @@ function AssignTaskContent() {
             isMounted = false
         }
     }, [supabase])
+
+    useEffect(() => {
+        if (children.length === 0) return
+
+        const refresh = async () => {
+            const taskGroups = await Promise.all(
+                children.map(async (child) => {
+                    const response = await api.tasks.listForParentChild(child.id)
+                    return response.data.map((task) => ({ ...task, childName: child.full_name || child.email }))
+                })
+            )
+            setAssignedTasks(taskGroups.flat())
+        }
+
+        const channel = supabase
+            .channel(`parent-assigned-tasks-${children.map((child) => child.id).join('-')}`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'assigned_tasks' }, () => {
+                void refresh()
+            })
+            .subscribe()
+
+        return () => {
+            void supabase.removeChannel(channel)
+        }
+    }, [children, supabase])
 
     const selectedLesson = lessons.find((lesson) => lesson.id === selectedLessonId) || null
 
@@ -199,6 +251,14 @@ function AssignTaskContent() {
                 )
             )
 
+            const taskGroups = await Promise.all(
+                children.map(async (child) => {
+                    const response = await api.tasks.listForParentChild(child.id)
+                    return response.data.map((task) => ({ ...task, childName: child.full_name || child.email }))
+                })
+            )
+            setAssignedTasks(taskGroups.flat())
+
             setIsSuccess(true)
             router.refresh()
         } catch (error) {
@@ -273,6 +333,49 @@ function AssignTaskContent() {
                     </div>
                 </div>
             </div>
+
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 className="text-lg font-extrabold text-slate-900">Bài hệ thống đã giao</h3>
+                        <p className="text-xs text-slate-500">Theo dõi bé đã bắt đầu hay đã hoàn thành bài được giao.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs font-black">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">{assignedTasks.length} bài</span>
+                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">{assignedTasks.filter((task) => task.status === 'completed').length} đã xong</span>
+                    </div>
+                </div>
+
+                {assignedTasks.length === 0 ? (
+                    <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5 text-center text-sm font-semibold text-slate-400">
+                        Chưa có bài hệ thống nào được giao.
+                    </div>
+                ) : (
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {assignedTasks.slice(0, 12).map((task) => {
+                            const status = taskStatusStyle[task.status]
+                            return (
+                                <article key={task.id} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="truncate text-sm font-black text-slate-800">{task.lessons?.title || 'Bài học'}</p>
+                                            <p className="mt-1 text-xs font-semibold text-slate-500">Bé: {task.childName || 'Chưa đặt tên'}</p>
+                                        </div>
+                                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-black ${status.className}`}>
+                                            {status.label}
+                                        </span>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-slate-500">
+                                        <span className="rounded-full bg-white px-2 py-1">Trang {task.start_page}-{task.end_page}</span>
+                                        <span className="rounded-full bg-white px-2 py-1">{task.session_duration_minutes} phút</span>
+                                        {task.assigned_date ? <span className="rounded-full bg-white px-2 py-1">{new Date(task.assigned_date).toLocaleDateString('vi-VN')}</span> : null}
+                                    </div>
+                                </article>
+                            )
+                        })}
+                    </div>
+                )}
+            </section>
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                 <section className="space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">

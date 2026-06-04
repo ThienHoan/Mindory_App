@@ -34,9 +34,11 @@ export interface Quiz {
 
 export interface Task {
     id: string
+    child_id?: string
     lesson_id: string
     status: 'pending' | 'in_progress' | 'completed'
     session_duration_minutes: number
+    assigned_date?: string
     start_page: number
     end_page: number
     lessons?: {
@@ -293,6 +295,10 @@ export const api = {
     tasks: {
         listForChild: async (childId: string): Promise<ApiListResponse<Task>> => {
             const raw = await requestJson<unknown>(`/tasks/mine?childId=${encodeURIComponent(childId)}`, undefined, { cacheMs: 3000 })
+            return normalizeListResponse<Task>(raw)
+        },
+        listForParentChild: async (childId: string): Promise<ApiListResponse<Task>> => {
+            const raw = await requestJson<unknown>(`/tasks?childId=${encodeURIComponent(childId)}`, undefined, { cacheMs: 3000 })
             return normalizeListResponse<Task>(raw)
         },
         get: async (id: string): Promise<Task> => {
