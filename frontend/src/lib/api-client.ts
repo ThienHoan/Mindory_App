@@ -113,7 +113,7 @@ export interface AIQuizQuestion {
 }
 
 export interface AIQuizPlayable {
-    document: Pick<AIQuizDocument, 'id' | 'title'> | null
+    document: Pick<AIQuizDocument, 'id' | 'title' | 'file_url'> | null
     questions: Pick<AIQuizQuestion, 'id' | 'question' | 'options' | 'correct_index'>[]
 }
 
@@ -127,11 +127,25 @@ export interface AIAssignment {
     status: AIAssignmentStatus
     assigned_at: string
     completed_at?: string | null
+    documentTitle?: string | null
+    pdfUrl?: string | null
+    document?: {
+        id: string
+        title: string
+        file_url?: string
+        created_at?: string
+    } | null
     pdf_documents?: {
         id: string
         title: string
+        file_url?: string
         created_at?: string
-    } | null
+    } | {
+        id: string
+        title: string
+        file_url?: string
+        created_at?: string
+    }[] | null
     profiles?: {
         id: string
         full_name: string | null

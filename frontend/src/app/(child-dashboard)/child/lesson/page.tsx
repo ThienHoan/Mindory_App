@@ -1,18 +1,15 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { Document, Page, pdfjs } from 'react-pdf'
 import { createClient } from '@/lib/supabase/client'
-import { api, Lesson, Subject, Task } from '@/lib/api-client'
+import { AIAssignment, AIQuizDocument, api, Lesson, Subject, Task } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 import { buildSessionPolicy } from '@/lib/learning/session-policy'
 import { LearningSessionProgress, loadLearningSessionProgress } from '@/lib/learning/session-storage'
 
 type TaskItem = Task
-
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
 
 const CORE_SUBJECT_KEYS = ['toan', 'tieng viet', 'tieng anh']
 const COMPLETION_XP = 10
@@ -32,151 +29,72 @@ function formatTime(seconds: number) {
     return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
+function normalizeAiPdfUrl(fileUrl: string) {
+    if (!fileUrl) return ''
+    if (fileUrl.startsWith('storage:')) return fileUrl
 
-function clampPage(page: number, min: number, max: number) {
-    return Math.min(Math.max(page, min), max)
-}
-
-function BookPdfViewer({
-    pdfUrl,
-    title,
-    startPage = 1,
-    endPage,
-    totalPages,
-}: {
-    pdfUrl: string
-    title: string
-    startPage?: number
-    endPage?: number
-    totalPages?: number
-}) {
-    const containerRef = useRef<HTMLDivElement | null>(null)
-    const [numPages, setNumPages] = useState<number | null>(null)
-    const [pageNumber, setPageNumber] = useState(Math.max(1, startPage))
-    const [pageWidth, setPageWidth] = useState(680)
-    const [flipStage, setFlipStage] = useState<'idle' | 'out' | 'in'>('idle')
-    const [flipDirection, setFlipDirection] = useState<'next' | 'prev'>('next')
-
-    const minPage = Math.max(1, startPage)
-    const knownLastPage = numPages ?? totalPages ?? endPage ?? minPage
-    const maxPage = Math.max(minPage, Math.min(endPage ?? knownLastPage, knownLastPage))
-    const pdfFile = useMemo(() => `/api/pdf-proxy?url=${encodeURIComponent(pdfUrl)}`, [pdfUrl])
-
-    useEffect(() => {
-        setNumPages(null)
-        setPageNumber(Math.max(1, startPage))
-        setFlipStage('idle')
-    }, [pdfUrl, startPage])
-
-    useEffect(() => {
-        const node = containerRef.current
-        if (!node || typeof ResizeObserver === 'undefined') return
-
-        const observer = new ResizeObserver(([entry]) => {
-            setPageWidth(Math.min(760, Math.max(280, entry.contentRect.width - 32)))
-        })
-        observer.observe(node)
-        return () => observer.disconnect()
-    }, [])
-
-    useEffect(() => {
-        setPageNumber((current) => clampPage(current, minPage, maxPage))
-    }, [maxPage, minPage])
-
-    function turnTo(nextPage: number) {
-        const target = clampPage(nextPage, minPage, maxPage)
-        if (target === pageNumber || flipStage !== 'idle') return
-
-        setFlipDirection(target > pageNumber ? 'next' : 'prev')
-        setFlipStage('out')
-
-        window.setTimeout(() => {
-            setPageNumber(target)
-            setFlipStage('in')
-        }, 170)
-
-        window.setTimeout(() => setFlipStage('idle'), 340)
+    try {
+        const url = new URL(fileUrl)
+        if (url.pathname.includes('/storage/v1/object/sign/pdfs/')) {
+            url.pathname = url.pathname.replace('/storage/v1/object/sign/pdfs/', '/storage/v1/object/public/pdfs/')
+            url.search = ''
+            return url.toString()
+        }
+    } catch {
+        return fileUrl
     }
 
-    const flipTransform =
-        flipStage === 'out'
-            ? flipDirection === 'next'
-                ? 'rotateY(-74deg)'
-                : 'rotateY(74deg)'
-            : flipStage === 'in'
-                ? flipDirection === 'next'
-                    ? 'rotateY(10deg)'
-                    : 'rotateY(-10deg)'
-                : 'rotateY(0deg)'
+    return fileUrl
+}
 
-    return (
-        <section className="rounded-3xl border border-purple-100 bg-gradient-to-b from-purple-50 to-white p-4 shadow-sm">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                    <p className="text-xs font-black uppercase tracking-widest text-purple-500">Tài liệu PDF</p>
-                    <p className="text-sm font-bold text-gray-600">Trang {pageNumber}/{maxPage}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => turnTo(pageNumber - 1)}
-                        disabled={pageNumber <= minPage || flipStage !== 'idle'}
-                        className="rounded-xl border border-purple-100 bg-white px-4 py-2 text-xs font-black text-purple-600 shadow-sm transition-colors hover:bg-purple-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                        Trang trước
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => turnTo(pageNumber + 1)}
-                        disabled={pageNumber >= maxPage || flipStage !== 'idle'}
-                        className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-black text-white shadow-sm transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                        Trang sau
-                    </button>
-                </div>
-            </div>
+type AIAssignmentDocument = Pick<AIQuizDocument, 'id' | 'title'> & Partial<Pick<AIQuizDocument, 'file_url' | 'created_at'>>
 
-            <div ref={containerRef} className="overflow-hidden rounded-2xl bg-[#f8f4ec] px-2 py-5 shadow-inner [perspective:1400px]">
-                <div
-                    className="mx-auto origin-left rounded-xl bg-white shadow-2xl ring-1 ring-black/5"
-                    style={{
-                        maxWidth: pageWidth,
-                        transform: flipTransform,
-                        transformOrigin: flipDirection === 'next' ? 'left center' : 'right center',
-                        transition: 'transform 170ms ease, opacity 170ms ease',
-                        opacity: flipStage === 'out' ? 0.68 : 1,
-                    }}
-                >
-                    <Document
-                        file={pdfFile}
-                        onLoadSuccess={({ numPages }) => {
-                            setNumPages(numPages)
-                            setPageNumber((current) => clampPage(current, minPage, Math.min(endPage ?? numPages, numPages)))
-                        }}
-                        loading={<div className="p-10 text-center text-sm font-bold text-gray-400">Đang tải PDF...</div>}
-                        error={
-                            <div className="p-8 text-center">
-                                <p className="text-sm font-bold text-red-500">Không thể nhúng PDF này.</p>
-                                <a href={pdfUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex rounded-xl bg-blue-50 px-4 py-2 text-xs font-black text-blue-700 hover:bg-blue-100">
-                                    Mở tài liệu gốc
-                                </a>
-                            </div>
-                        }
-                    >
-                        <Page
-                            key={pageNumber}
-                            pageNumber={pageNumber}
-                            width={pageWidth}
-                            renderAnnotationLayer={false}
-                            renderTextLayer={false}
-                            loading={<div className="p-10 text-center text-sm font-bold text-gray-400">Đang mở trang...</div>}
-                        />
-                    </Document>
-                </div>
-            </div>
-            <p className="mt-3 text-center text-xs font-bold text-gray-400">{title}</p>
-        </section>
-    )
+function getAiAssignmentDocument(documents: AIAssignment['pdf_documents']): AIAssignmentDocument | null {
+    if (Array.isArray(documents)) return documents[0] ?? null
+    return documents ?? null
+}
+
+function getAiAssignmentTitle(assignment: AIAssignment) {
+    const document = getAiAssignmentDocument(assignment.pdf_documents)
+    return assignment.documentTitle ?? assignment.document?.title ?? document?.title ?? 'Bài AI'
+}
+
+function getAiAssignmentFileUrl(assignment: AIAssignment) {
+    const document = getAiAssignmentDocument(assignment.pdf_documents)
+    return assignment.pdfUrl ?? assignment.document?.file_url ?? document?.file_url ?? ''
+}
+
+function getAiPdfStoragePath(fileUrl: string) {
+    const trimmed = fileUrl.trim()
+    if (!trimmed) return ''
+
+    if (trimmed.startsWith('storage:')) {
+        return trimmed.replace(/^storage:/, '').replace(/^\/+/, '')
+    }
+
+    try {
+        const url = new URL(trimmed)
+        const markers = ['/storage/v1/object/sign/pdfs/', '/storage/v1/object/public/pdfs/']
+        for (const marker of markers) {
+            const index = url.pathname.indexOf(marker)
+            if (index >= 0) {
+                return decodeURIComponent(url.pathname.slice(index + marker.length))
+            }
+        }
+        return ''
+    } catch {
+        return trimmed.replace(/^pdfs\//, '').replace(/^\/+/, '')
+    }
+}
+
+function resolveAiPdfUrl(fileUrl: string, supabase: ReturnType<typeof createClient>) {
+    const storagePath = getAiPdfStoragePath(fileUrl)
+    if (storagePath) {
+        const { data } = supabase.storage.from('pdfs').getPublicUrl(storagePath)
+        return data.publicUrl
+    }
+
+    return normalizeAiPdfUrl(fileUrl.trim())
 }
 
 function LessonContent() {
@@ -185,6 +103,8 @@ function LessonContent() {
 
     const taskId = searchParams.get('taskId')
     const lessonId = searchParams.get('id')
+    const aiAssignmentId = searchParams.get('aiAssignmentId')
+    const aiDocumentId = searchParams.get('aiDocumentId') || searchParams.get('documentId')
 
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -192,9 +112,11 @@ function LessonContent() {
     const [subjects, setSubjects] = useState<Subject[]>([])
     const [lessonsBySubject, setLessonsBySubject] = useState<Record<string, Lesson[]>>({})
     const [tasks, setTasks] = useState<TaskItem[]>([])
+    const [aiAssignments, setAiAssignments] = useState<AIAssignment[]>([])
 
-    const [detailSource, setDetailSource] = useState<'task' | 'free' | null>(null)
+    const [detailSource, setDetailSource] = useState<'task' | 'free' | 'ai' | null>(null)
     const [detailTask, setDetailTask] = useState<TaskItem | null>(null)
+    const [detailAiAssignment, setDetailAiAssignment] = useState<AIAssignment | null>(null)
     const [detailLesson, setDetailLesson] = useState<Lesson | null>(null)
     const [detailProgress, setDetailProgress] = useState<LearningSessionProgress | null>(null)
     const [quizCount, setQuizCount] = useState(0)
@@ -210,9 +132,10 @@ function LessonContent() {
                     return
                 }
 
-                const [{ data: profile }, taskRes] = await Promise.all([
+                const [{ data: profile }, taskRes, aiRes] = await Promise.all([
                     supabase.from('profiles').select('*').eq('id', user.id).single(),
                     api.tasks.listForChild(user.id),
+                    api.aiAssignments.listMine(),
                 ])
 
                 if (profile?.grade === null || profile?.grade === undefined) {
@@ -225,6 +148,7 @@ function LessonContent() {
 
                 const taskList = taskRes?.data ?? taskRes ?? []
                 setTasks(taskList)
+                setAiAssignments((aiRes ?? []) as AIAssignment[])
 
                 if (taskId) {
                     const task = await api.tasks.get(taskId)
@@ -249,6 +173,7 @@ function LessonContent() {
 
                     setDetailSource('task')
                     setDetailTask(task)
+                    setDetailAiAssignment(null)
                     setDetailLesson(lesson)
                     setDetailProgress(loadLearningSessionProgress(task.id))
                     setQuizCount(Array.isArray(quizzes) ? quizzes.length : 0)
@@ -262,9 +187,46 @@ function LessonContent() {
                     ])
                     setDetailSource('free')
                     setDetailTask(null)
+                    setDetailAiAssignment(null)
                     setDetailProgress(null)
                     setDetailLesson(lesson)
                     setQuizCount(Array.isArray(quizzes) ? quizzes.length : 0)
+                    return
+                }
+
+                if (aiAssignmentId || aiDocumentId) {
+                    const assignment = ((aiRes ?? []) as AIAssignment[]).find((item) => (
+                        (aiAssignmentId && item.id === aiAssignmentId) ||
+                        (aiDocumentId && item.document_id === aiDocumentId)
+                    ))
+
+                    if (!assignment) {
+                        setError('Không tìm thấy bài AI được giao.')
+                        return
+                    }
+
+                    const playable = await api.aiQuizzes.getPlayable(assignment.document_id)
+                    const title = playable.document?.title ?? getAiAssignmentTitle(assignment)
+                    const fileUrl = resolveAiPdfUrl(playable.document?.file_url ?? getAiAssignmentFileUrl(assignment), supabase)
+                    if (!fileUrl) {
+                        setError('Bài AI này chưa có PDF để học.')
+                        return
+                    }
+
+                    setDetailSource('ai')
+                    setDetailTask(null)
+                    setDetailAiAssignment(assignment)
+                    setDetailProgress(null)
+                    setDetailLesson({
+                        id: assignment.document_id,
+                        subject_id: 'ai-pdf',
+                        title,
+                        description: 'Bài PDF AI được phụ huynh giao. Bé học tài liệu trước rồi làm kiểm tra.',
+                        pdf_url: fileUrl,
+                        total_pages: 1,
+                        subjects: { name: 'AI PDF', grade: nextGrade },
+                    })
+                    setQuizCount(playable.questions.length)
                     return
                 }
 
@@ -292,9 +254,13 @@ function LessonContent() {
         }
 
         load()
-    }, [lessonId, supabase, taskId])
+    }, [aiAssignmentId, aiDocumentId, lessonId, supabase, taskId])
 
     const activeTasks = useMemo(() => tasks.filter((task) => task.status !== 'completed'), [tasks])
+    const activeAiAssignments = useMemo(
+        () => aiAssignments.filter((assignment) => assignment.status !== 'completed'),
+        [aiAssignments]
+    )
 
     if (loading) {
         return (
@@ -319,7 +285,7 @@ function LessonContent() {
         )
     }
 
-    if (!taskId && !lessonId) {
+    if (!taskId && !lessonId && !aiAssignmentId && !aiDocumentId) {
         return (
             <div className="max-w-6xl mx-auto p-8 space-y-7">
                 <div className="rounded-[2rem] bg-gradient-to-r from-purple-600 to-violet-500 p-7 text-white">
@@ -358,6 +324,36 @@ function LessonContent() {
                                         className="mt-4 inline-flex w-full justify-center py-3 rounded-2xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-black"
                                     >
                                         Mở bài học
+                                    </Link>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {activeAiAssignments.length > 0 && (
+                    <section className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-lg font-black text-gray-800">Bài AI được giao</h2>
+                            <span className="text-xs font-black text-amber-600 bg-amber-100 px-3 py-1 rounded-full">{activeAiAssignments.length} bài</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            {activeAiAssignments.map((assignment) => (
+                                <div key={assignment.id} className="bg-white border border-amber-100 rounded-3xl p-5 shadow-sm">
+                                    <p className="text-xs font-black text-amber-500 uppercase tracking-widest">AI Quiz</p>
+                                    <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{getAiAssignmentTitle(assignment)}</h3>
+                                    <p className="text-sm text-gray-500 mt-1 line-clamp-2">Bố mẹ đã giao bài AI này cho bé. Bé có thể mở từ Bài học hoặc Kiểm tra.</p>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">Hoàn thành +{COMPLETION_XP} XP</span>
+                                        <span className="rounded-full bg-amber-50 px-3 py-1 text-[11px] font-black text-amber-600">
+                                            {new Date(assignment.assigned_at).toLocaleDateString('vi-VN')}
+                                        </span>
+                                    </div>
+                                    <Link
+                                        href={`/child/lesson?aiAssignmentId=${assignment.id}&aiDocumentId=${assignment.document_id}`}
+                                        className="mt-4 inline-flex w-full justify-center py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black"
+                                    >
+                                        Mở bài học AI
                                     </Link>
                                 </div>
                             ))}
@@ -450,9 +446,16 @@ function LessonContent() {
     const taskActiveSeconds = detailProgress?.activeSeconds ?? 0
     const canStartTaskQuiz = detailSource !== 'task' || isTaskCompleted || taskActiveSeconds >= requiredActiveSeconds
     const taskStudyHref = detailTask ? `/child/lesson/study?taskId=${detailTask.id}` : '/child/lesson'
-    const quizHref = detailSource === 'task' && detailTask
-        ? `/child/quiz?taskId=${detailTask.id}&lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}&duration=${detailTask.session_duration_minutes}`
-        : `/child/quiz?lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}`
+    const studyHref = detailSource === 'ai' && detailAiAssignment
+        ? `/child/lesson/study?aiAssignmentId=${detailAiAssignment.id}&aiDocumentId=${detailAiAssignment.document_id}`
+        : detailSource === 'task' && detailTask
+            ? `/child/lesson/study?taskId=${detailTask.id}`
+            : `/child/lesson/study?lessonId=${detailLesson.id}`
+    const quizHref = detailSource === 'ai' && detailAiAssignment
+        ? `/child/quiz?aiAssignmentId=${detailAiAssignment.id}&aiDocumentId=${detailAiAssignment.document_id}&lessonTitle=${encodeURIComponent(detailLesson.title)}`
+        : detailSource === 'task' && detailTask
+            ? `/child/quiz?taskId=${detailTask.id}&lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}&duration=${detailTask.session_duration_minutes}`
+            : `/child/quiz?lessonId=${detailLesson.id}&lessonTitle=${encodeURIComponent(detailLesson.title)}`
 
     return (
         <div className="max-w-5xl mx-auto p-8 space-y-6">
@@ -493,19 +496,15 @@ function LessonContent() {
                         </div>
                     </div>
 
-                    {detailLesson.pdf_url && (
+                    {detailLesson.pdf_url ? (
                         <Link
-                            href={
-                                detailSource === 'task' && detailTask
-                                    ? `/child/lesson/study?taskId=${detailTask.id}`
-                                    : `/child/lesson/study?lessonId=${detailLesson.id}`
-                            }
+                            href={studyHref}
                             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-50 text-blue-700 font-black text-sm hover:bg-blue-100 transition-colors"
                         >
                             <span>📄</span>
                             Vào phòng học PDF
                         </Link>
-                    )}
+                    ) : null}
                 </div>
 
                 <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm space-y-4">
@@ -525,11 +524,13 @@ function LessonContent() {
                     <div className="rounded-2xl border border-gray-100 p-4">
                         <p className="text-sm font-bold text-gray-700">Sẵn sàng làm kiểm tra?</p>
                         <p className="text-xs text-gray-400 mt-1">
-                            {detailSource === 'task'
+                            {detailSource === 'ai'
+                                ? 'Bé học PDF này trước, rồi làm bài kiểm tra AI đã được giao.'
+                                : detailSource === 'task'
                                 ? 'Kết quả sẽ được lưu vào backend để hoàn thành nhiệm vụ và tạo phần thưởng.'
                                 : 'Chế độ tự học: làm bài luyện tập theo dữ liệu thật của môn học.'}
                         </p>
-                        {detailSource === 'task' && !isTaskCompleted && (
+                        {(detailSource === 'task' || detailSource === 'ai') && !isTaskCompleted && (
                             <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">
                                 Hoàn thành +{COMPLETION_XP} XP
                             </div>
@@ -544,7 +545,7 @@ function LessonContent() {
                                 quizCount > 0 ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-200' : 'bg-gray-100 text-gray-400 pointer-events-none'
                             )}
                         >
-                            {isTaskCompleted ? 'Làm lại kiểm tra' : 'Bắt đầu kiểm tra'}
+                            {isTaskCompleted ? 'Làm lại kiểm tra' : detailSource === 'ai' ? 'Làm kiểm tra AI' : 'Bắt đầu kiểm tra'}
                         </Link>
                     ) : (
                         <Link

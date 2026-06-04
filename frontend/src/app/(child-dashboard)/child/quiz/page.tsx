@@ -637,23 +637,28 @@ function QuizContent() {
                                     </Link>
                                 </div>
                             ))}
-                            {activeAiAssignments.map((assignment) => (
-                                <div key={assignment.id} className="bg-white rounded-3xl border border-gray-100 p-5 shadow-sm">
-                                    <p className="text-xs font-black uppercase tracking-widest text-amber-500">AI Quiz</p>
-                                    <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{assignment.pdf_documents?.title ?? 'Bài AI'}</h3>
-                                    <p className="text-sm text-gray-500 mt-1 line-clamp-2">Bố mẹ đã giao bài AI này cho bé.</p>
-                                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                                        <p className="text-xs font-bold text-gray-500">Pomodoro: {Math.round(buildSessionPolicy({ mode: 'assigned-quiz' }).sessionTotalSeconds / 60)} phút</p>
-                                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">+{COMPLETION_XP} XP</span>
+                            {activeAiAssignments.map((assignment) => {
+                                const document = Array.isArray(assignment.pdf_documents) ? assignment.pdf_documents[0] : assignment.pdf_documents
+                                const title = assignment.documentTitle ?? assignment.document?.title ?? document?.title ?? 'Bài AI'
+
+                                return (
+                                    <div key={assignment.id} className="bg-white rounded-3xl border border-gray-100 p-5 shadow-sm">
+                                        <p className="text-xs font-black uppercase tracking-widest text-amber-500">AI Quiz</p>
+                                        <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{title}</h3>
+                                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">Bố mẹ đã giao bài AI này cho bé.</p>
+                                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                                            <p className="text-xs font-bold text-gray-500">Pomodoro: {Math.round(buildSessionPolicy({ mode: 'assigned-quiz' }).sessionTotalSeconds / 60)} phút</p>
+                                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">+{COMPLETION_XP} XP</span>
+                                        </div>
+                                        <Link
+                                            href={`/child/quiz?aiAssignmentId=${assignment.id}&aiDocumentId=${assignment.document_id}&lessonTitle=${encodeURIComponent(title)}`}
+                                            className="mt-3 inline-flex justify-center w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black"
+                                        >
+                                            Làm kiểm tra ngay
+                                        </Link>
                                     </div>
-                                    <Link
-                                        href={`/child/quiz?aiAssignmentId=${assignment.id}&aiDocumentId=${assignment.document_id}&lessonTitle=${encodeURIComponent(assignment.pdf_documents?.title ?? 'Bài AI')}`}
-                                        className="mt-3 inline-flex justify-center w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black"
-                                    >
-                                        Làm kiểm tra ngay
-                                    </Link>
-                                </div>
-                            ))}
+                                )
+                            })}
                         </div>
                     </section>
                 )}
