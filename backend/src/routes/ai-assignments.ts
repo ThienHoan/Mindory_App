@@ -130,13 +130,18 @@ router.patch('/:id/complete', authenticate, requireRole('child'), validate(compl
 
     const { data: assignment, error: findError } = await supabaseAdmin
         .from('assigned_ai_quizzes')
-        .select('id')
+        .select('id, status')
         .eq('id', assignmentId)
         .eq('child_id', childId)
         .maybeSingle();
 
     if (findError || !assignment) {
         res.status(404).json({ error: 'Assignment not found' });
+        return;
+    }
+
+    if (assignment.status === 'completed') {
+        res.json({ ...assignment, xpAwarded: 0, xp: null });
         return;
     }
 
@@ -152,7 +157,16 @@ router.patch('/:id/complete', authenticate, requireRole('child'), validate(compl
         return;
     }
 
-    res.json(data);
+    // Grant XP to the child for completing the AI assignment
+    const xpAwarded = 10;
+    let nextXp: number | null = null;
+    const { data: profile } = await supabaseAdmin.from('profiles').select('xp').eq('id', childId).single();
+    if (profile) {
+        nextXp = (profile.xp || 0) + xpAwarded;
+        await supabaseAdmin.from('profiles').update({ xp: nextXp }).eq('id', childId);
+    }
+
+    res.json({ ...data, xpAwarded, xp: nextXp });
 });
 
 export default router;

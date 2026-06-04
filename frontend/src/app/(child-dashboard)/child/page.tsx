@@ -69,6 +69,8 @@ const weeklyQuests = [
     { icon: '✏️', label: 'Họa sĩ nhí', desc: 'Làm bài tập Tiếng Việt', bg: 'bg-green-50', border: 'border-green-100' },
 ]
 
+const COMPLETION_XP = 10
+
 export default function ChildHomePage() {
     const supabase = useMemo(() => createClient(), [])
     const [profile, setProfile] = useState<ChildProfile | null>(null)
@@ -119,6 +121,21 @@ export default function ChildHomePage() {
         }
         loadData()
     }, [supabase])
+
+    useEffect(() => {
+        if (!profile?.id) return
+
+        const channel = supabase
+            .channel(`child-profile-${profile.id}`)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${profile.id}` }, (payload) => {
+                setProfile((current) => current ? { ...current, ...(payload.new as Partial<ChildProfile>) } : current)
+            })
+            .subscribe()
+
+        return () => {
+            void supabase.removeChannel(channel)
+        }
+    }, [profile?.id, supabase])
 
     if (loading) {
         return (
@@ -294,7 +311,14 @@ export default function ChildHomePage() {
                                         <p className={`text-sm font-black ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                                             {task.lessons?.title || 'Bài học'}
                                         </p>
-                                        <p className="text-xs text-gray-400">{subjectName}</p>
+                                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                                            <p className="text-xs text-gray-400">{subjectName}</p>
+                                            {!isDone && (
+                                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-600">
+                                                    +{COMPLETION_XP} XP
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                     {isDone ? (
                                         <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">✓</div>
@@ -344,6 +368,12 @@ function SubjectCard({
                         <div className="h-full bg-purple-400 rounded-full transition-all duration-700" style={{ width: `${progress}%` }} />
                     </div>
                     <p className="text-[11px] text-gray-400 mt-1.5">{done}/{total} bài đã hoàn thành</p>
+                </div>
+            )}
+
+            {taskId && (
+                <div className="mb-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">
+                    Hoàn thành +{COMPLETION_XP} XP
                 </div>
             )}
 

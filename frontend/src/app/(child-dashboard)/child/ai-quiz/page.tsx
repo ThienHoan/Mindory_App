@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api, AIAssignment } from '@/lib/api-client'
 
+const COMPLETION_XP = 10
+
 export default function ChildAIQuizPage() {
     const [assignments, setAssignments] = useState<AIAssignment[]>([])
     const [loading, setLoading] = useState(true)
@@ -62,6 +64,11 @@ export default function ChildAIQuizPage() {
                                 <div>
                                     <h3 className="text-lg font-bold text-slate-800">{title}</h3>
                                     <p className="mt-1 text-xs text-slate-400">Giao ngày {new Date(assignment.assigned_at).toLocaleDateString('vi-VN')}</p>
+                                    {assignment.status !== 'completed' && (
+                                        <div className="mt-2 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">
+                                            Hoàn thành +{COMPLETION_XP} XP
+                                        </div>
+                                    )}
                                 </div>
                                 <span className={`rounded-full px-3 py-1 text-xs font-bold ${assignment.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                                     {statusLabel}

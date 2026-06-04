@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { api, RewardItem, RewardRedemption } from '@/lib/api-client'
 
@@ -18,14 +18,16 @@ export default function ChildRewardsPage() {
     const [loading, setLoading] = useState(true)
     const [message, setMessage] = useState<string | null>(null)
 
-    async function load(childId: string) {
-        const [store, requests] = await Promise.all([
+    const load = useCallback(async (childId: string) => {
+        const [profile, store, requests] = await Promise.all([
+            supabase.from('profiles').select('id, xp, parent_id').eq('id', childId).single(),
             api.rewards.listStore({ childId }),
             api.rewards.listRedemptions({ childId }),
         ])
+        if (profile.data) setChild(profile.data as ChildProfile)
         setItems(store.filter((item) => item.is_active))
         setRedemptions(requests)
-    }
+    }, [supabase])
 
     useEffect(() => {
         async function init() {
@@ -40,7 +42,6 @@ export default function ChildRewardsPage() {
                     .single()
 
                 if (profile) {
-                    setChild(profile as ChildProfile)
                     await load(user.id)
                 }
             } finally {
@@ -48,7 +49,26 @@ export default function ChildRewardsPage() {
             }
         }
         void init()
-    }, [supabase])
+    }, [load, supabase])
+
+    useEffect(() => {
+        if (!child?.id || !child.parent_id) return
+
+        const refresh = () => {
+            void load(child.id)
+        }
+
+        const channel = supabase
+            .channel(`child-rewards-${child.id}`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${child.id}` }, refresh)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'reward_items', filter: `parent_id=eq.${child.parent_id}` }, refresh)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'reward_redemptions', filter: `child_id=eq.${child.id}` }, refresh)
+            .subscribe()
+
+        return () => {
+            void supabase.removeChannel(channel)
+        }
+    }, [child?.id, child?.parent_id, load, supabase])
 
     async function redeem(item: RewardItem) {
         if (!child) return
@@ -61,17 +81,6 @@ export default function ChildRewardsPage() {
         } catch (error) {
             console.error('Lỗi khi đổi quà:', error)
             setMessage('Chưa đủ XP để đổi quà này. Hoặc có lỗi xảy ra, thử lại sau nhé!')
-        }
-    }
-
-    async function fulfill(request: RewardRedemption) {
-        if (!child) return
-        try {
-            await api.rewards.fulfillRedemption(request.id, child.id)
-            await load(child.id)
-        } catch (error) {
-            console.error('Lỗi khi nhận quà:', error)
-            setMessage('Không thể xác nhận nhận quà. Thử lại sau nhé!')
         }
     }
 
@@ -96,6 +105,7 @@ export default function ChildRewardsPage() {
                     <div className="rounded-3xl border border-dashed border-purple-200 bg-white p-8 text-center text-sm font-bold text-slate-400 md:col-span-2 xl:col-span-3">Ba mẹ chưa tạo quà nào.</div>
                 ) : items.map((item) => {
                     const enough = xp >= item.cost_points
+
                     return (
                         <article key={item.id} className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-black/5">
                             <div className="flex items-start justify-between gap-3">
@@ -126,9 +136,8 @@ export default function ChildRewardsPage() {
                     const isApproved = request.status === 'approved'
                     const isFulfilled = request.status === 'fulfilled'
                     const isRejected = request.status === 'rejected'
-
                     const statusBadge = isRequested ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-black text-slate-600">Chờ ba mẹ duyệt</span>
-                        : isApproved ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-black text-blue-600">Chờ bạn nhận quà</span>
+                        : isApproved ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-black text-blue-600">Chờ ba mẹ trao quà</span>
                         : isFulfilled ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-black text-emerald-600">Đã nhận quà</span>
                         : <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-black text-red-600">Từ chối</span>
 
@@ -141,14 +150,6 @@ export default function ChildRewardsPage() {
                                 </div>
                                 <p className="mt-1 text-xs font-bold text-slate-400">{request.cost_points} XP</p>
                             </div>
-                            {isApproved && (
-                                <button
-                                    onClick={() => fulfill(request)}
-                                    className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-purple-700 active:scale-95 transition-all"
-                                >
-                                    Đã nhận quà! 🎉
-                                </button>
-                            )}
                         </div>
                     )
                 })}

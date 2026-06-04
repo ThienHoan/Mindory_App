@@ -19,6 +19,7 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
     const [score, setScore] = useState(0)
     const [isFinished, setIsFinished] = useState(false)
     const [loading, setLoading] = useState(true)
+    const [xpAwarded, setXpAwarded] = useState(0)
 
     useEffect(() => {
         loadData()
@@ -27,10 +28,12 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
     useEffect(() => {
         if (!isFinished || !assignmentId || completionSentRef.current) return
         completionSentRef.current = true
-        api.aiAssignments.markComplete(assignmentId).catch((error) => {
-            console.error('Failed to mark assignment complete:', error)
-            completionSentRef.current = false
-        })
+        api.aiAssignments.markComplete(assignmentId)
+            .then((result) => setXpAwarded(result.xpAwarded ?? 0))
+            .catch((error) => {
+                console.error('Failed to mark assignment complete:', error)
+                completionSentRef.current = false
+            })
     }, [assignmentId, isFinished])
 
     const loadData = async () => {
@@ -75,6 +78,8 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
         setIsAnswered(false)
         setScore(0)
         setIsFinished(false)
+        setXpAwarded(0)
+        completionSentRef.current = false
     }
 
     if (loading) {
@@ -123,6 +128,13 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
                             {score}<span className="text-3xl text-slate-400">/{questions.length}</span>
                         </div>
                         <p className="text-slate-500 font-medium mb-8">CÃ¢u tráº£ lá»i Ä‘Ãºng</p>
+
+                        {xpAwarded > 0 && (
+                            <div className="mb-6 w-full rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4">
+                                <p className="text-xs font-black uppercase tracking-widest text-emerald-600">XP vừa nhận</p>
+                                <p className="mt-1 text-3xl font-black text-emerald-700">+{xpAwarded} XP</p>
+                            </div>
+                        )}
 
                         <div className="flex gap-4 w-full">
                             <button onClick={handleRestart} className="flex-1 bg-amber-100 text-amber-700 py-4 rounded-2xl font-bold text-lg hover:bg-amber-200 transition-colors flex items-center justify-center gap-2">

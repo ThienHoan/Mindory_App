@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 type TaskItem = Task
 
 const CORE_SUBJECT_KEYS = ['toan', 'tieng viet', 'tieng anh']
+const COMPLETION_XP = 10
 
 function normalizeSubjectName(name: string) {
     return name.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim()
@@ -49,12 +50,14 @@ function ResultScreen({
     total,
     rewardType,
     rewardMinutes,
+    xpAwarded,
     onRetry,
 }: {
     score: number
     total: number
     rewardType?: 'game' | 'music' | null
     rewardMinutes?: number
+    xpAwarded?: number
     onRetry: () => void
 }) {
     const pct = total > 0 ? Math.round((score / total) * 100) : 0
@@ -88,6 +91,13 @@ function ResultScreen({
                     />
                 </div>
                 <p className="text-2xl font-black text-gray-800 -mt-3">{pct}%</p>
+
+                {(xpAwarded ?? 0) > 0 && (
+                    <div className="w-full rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4 text-center">
+                        <p className="text-xs font-black uppercase tracking-widest text-emerald-600">XP vừa nhận</p>
+                        <p className="mt-1 text-3xl font-black text-emerald-700">+{xpAwarded} XP</p>
+                    </div>
+                )}
 
                 {rewardType && (
                     <div
@@ -164,6 +174,7 @@ function QuizContent() {
     const [finished, setFinished] = useState(false)
     const [rewardType, setRewardType] = useState<'game' | 'music' | null>(null)
     const [rewardMinutes, setRewardMinutes] = useState(0)
+    const [xpAwarded, setXpAwarded] = useState(0)
 
     const handleFinish = useCallback(async () => {
         setFinished(true)
@@ -171,7 +182,8 @@ function QuizContent() {
         if (aiAssignmentId && childId) {
             setSubmitting(true)
             try {
-                await api.aiAssignments.markComplete(aiAssignmentId)
+                const result = await api.aiAssignments.markComplete(aiAssignmentId)
+                setXpAwarded(result.xpAwarded ?? 0)
             } catch {
                 // keep result screen visible even if save fails
             } finally {
@@ -200,6 +212,7 @@ function QuizContent() {
                     setRewardType(result.reward.reward_type)
                     setRewardMinutes(Math.round((result.reward.duration_seconds ?? 0) / 60))
                 }
+                setXpAwarded(result.xpAwarded ?? 0)
             } catch {
                 // keep result screen visible even if save fails
             } finally {
@@ -477,6 +490,7 @@ function QuizContent() {
         setFinished(false)
         setRewardType(null)
         setRewardMinutes(0)
+        setXpAwarded(0)
         setTotalSecondsRemaining(sessionTotalSeconds)
         setFocusSecondsRemaining(FOCUS_INTERVAL_SECONDS)
         setFocusBreakPending(false)
@@ -534,7 +548,10 @@ function QuizContent() {
                                     <p className="text-xs font-black uppercase tracking-widest text-indigo-500">Task Quiz</p>
                                     <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{task.lessons?.title ?? 'Bài học'}</h3>
                                     <p className="text-sm text-gray-500 mt-1 line-clamp-2">{task.lessons?.description ?? 'Làm bài kiểm tra để hoàn thành nhiệm vụ.'}</p>
-                                    <p className="mt-3 text-xs font-bold text-gray-500">Pomodoro: {task.session_duration_minutes} phút</p>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        <p className="text-xs font-bold text-gray-500">Pomodoro: {task.session_duration_minutes} phút</p>
+                                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">+{COMPLETION_XP} XP</span>
+                                    </div>
                                     <Link
                                         href={`/child/quiz?taskId=${task.id}&lessonId=${task.lesson_id}&lessonTitle=${encodeURIComponent(task.lessons?.title ?? 'Bài học')}&duration=${task.session_duration_minutes}`}
                                         className="mt-3 inline-flex justify-center w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-black"
@@ -548,7 +565,10 @@ function QuizContent() {
                                     <p className="text-xs font-black uppercase tracking-widest text-amber-500">AI Quiz</p>
                                     <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{assignment.pdf_documents?.title ?? 'Bài AI'}</h3>
                                     <p className="text-sm text-gray-500 mt-1 line-clamp-2">Bố mẹ đã giao bài AI này cho bé.</p>
-                                    <p className="mt-3 text-xs font-bold text-gray-500">Pomodoro: {Math.round(POMODORO_TOTAL_SECONDS / 60)} phút</p>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        <p className="text-xs font-bold text-gray-500">Pomodoro: {Math.round(POMODORO_TOTAL_SECONDS / 60)} phút</p>
+                                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">+{COMPLETION_XP} XP</span>
+                                    </div>
                                     <Link
                                         href={`/child/quiz?aiAssignmentId=${assignment.id}&aiDocumentId=${assignment.document_id}&lessonTitle=${encodeURIComponent(assignment.pdf_documents?.title ?? 'Bài AI')}`}
                                         className="mt-3 inline-flex justify-center w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black"
@@ -634,6 +654,7 @@ function QuizContent() {
                 total={quizzes.length}
                 rewardType={rewardType}
                 rewardMinutes={rewardMinutes}
+                xpAwarded={xpAwarded}
                 onRetry={handleRetry}
             />
         )

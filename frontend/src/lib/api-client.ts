@@ -114,6 +114,13 @@ export interface SessionFinishResult {
         reward_type: 'game' | 'music'
         duration_seconds?: number
     }
+    xpAwarded?: number
+    xp?: number | null
+}
+
+export interface XPRewardResult {
+    xpAwarded?: number
+    xp?: number | null
 }
 
 export interface MiniGamePlayResult {
@@ -483,7 +490,7 @@ export const api = {
             }
             return []
         },
-        markComplete: async (assignmentId: string): Promise<AIAssignment> => {
+        markComplete: async (assignmentId: string): Promise<AIAssignment & XPRewardResult> => {
             const raw = await requestJson<unknown>(`/ai-assignments/${assignmentId}/complete`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -533,16 +540,6 @@ export const api = {
                 body: JSON.stringify({ childId }),
             })
             return normalizeObjectResponse<{ xp: number }>(raw)
-        },
-
-        /** Bé xác nhận đã nhận quà (fulfilled). */
-        fulfillRedemption: async (redemptionId: string, childId: string): Promise<RewardRedemption> => {
-            const raw = await requestJson<unknown>(`/reward-redemptions/${encodeURIComponent(redemptionId)}/fulfill`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ childId }),
-            })
-            return normalizeObjectResponse<RewardRedemption>(raw)
         },
 
         /** Ba/mẹ tạo quà mới trong kho. */

@@ -1,6 +1,6 @@
 'use client'
 
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { api, RewardItem, RewardRedemption } from '@/lib/api-client'
 
@@ -16,14 +16,14 @@ export default function ParentRewardsPage() {
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    async function load(id: string) {
+    const load = useCallback(async (id: string) => {
         const [store, requests] = await Promise.all([
             api.rewards.listStore({ parentId: id }),
             api.rewards.listRedemptions({ parentId: id }),
         ])
         setItems(store)
         setRedemptions(requests)
-    }
+    }, [])
 
     useEffect(() => {
         async function init() {
@@ -39,7 +39,26 @@ export default function ParentRewardsPage() {
             }
         }
         void init()
-    }, [supabase])
+    }, [load, supabase])
+
+    useEffect(() => {
+        if (!parentId) return
+
+        const refresh = () => {
+            void load(parentId)
+        }
+
+        const channel = supabase
+            .channel(`parent-rewards-${parentId}`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `parent_id=eq.${parentId}` }, refresh)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'reward_items', filter: `parent_id=eq.${parentId}` }, refresh)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'reward_redemptions', filter: `parent_id=eq.${parentId}` }, refresh)
+            .subscribe()
+
+        return () => {
+            void supabase.removeChannel(channel)
+        }
+    }, [load, parentId, supabase])
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault()
@@ -157,11 +176,16 @@ export default function ParentRewardsPage() {
                     const isApproved = request.status === 'approved'
                     const isFulfilled = request.status === 'fulfilled'
                     const isRejected = request.status === 'rejected'
+                    const canReject = isRequested || isApproved
 
                     const statusBadge = isRequested ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-black text-slate-600">Chờ duyệt</span>
                         : isApproved ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-black text-blue-600">Chờ bé nhận</span>
                         : isFulfilled ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-black text-emerald-600">Đã trao</span>
                         : <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-black text-red-600">Từ chối</span>
+
+                    const visibleStatusBadge = isApproved
+                        ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-black text-blue-600">Chờ trao quà</span>
+                        : statusBadge
 
                     return (
                         <article key={request.id} className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-black/5 transition-all">
@@ -169,7 +193,7 @@ export default function ParentRewardsPage() {
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <p className="text-base font-black text-slate-900">{request.title}</p>
-                                        {statusBadge}
+                                        {visibleStatusBadge}
                                     </div>
                                     <p className="mt-1 text-sm text-slate-500">Bé: {request.profiles?.full_name || 'Chưa đặt tên'} - {request.cost_points} XP</p>
                                 </div>
@@ -181,8 +205,15 @@ export default function ParentRewardsPage() {
                                     >
                                         Duyệt
                                     </button>
+                                    <button
+                                        disabled={!isApproved}
+                                        onClick={() => updateRequest(request.id, 'fulfilled')}
+                                        className={`rounded-xl px-3 py-2 text-xs font-black transition-colors ${isFulfilled ? 'bg-emerald-600 text-white shadow-sm' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'} disabled:opacity-50`}
+                                    >
+                                        Đã trao
+                                    </button>
                                     <button 
-                                        disabled={isRejected || isFulfilled}
+                                        disabled={!canReject}
                                         onClick={() => updateRequest(request.id, 'rejected')} 
                                         className={`rounded-xl px-3 py-2 text-xs font-black transition-colors ${isRejected ? 'bg-red-600 text-white shadow-sm' : 'bg-red-50 text-red-600 hover:bg-red-100'} disabled:opacity-50`}
                                     >

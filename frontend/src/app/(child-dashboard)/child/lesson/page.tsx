@@ -13,6 +13,7 @@ type TaskItem = Task
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
 
 const CORE_SUBJECT_KEYS = ['toan', 'tieng viet', 'tieng anh']
+const COMPLETION_XP = 10
 
 function normalizeSubjectName(name: string) {
     return name.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim()
@@ -328,6 +329,9 @@ function LessonContent() {
                                     <p className="text-xs font-black text-purple-500 uppercase tracking-widest">Task</p>
                                     <h3 className="text-lg font-black text-gray-800 mt-1 line-clamp-1">{task.lessons?.title ?? 'Bài học'}</h3>
                                     <p className="text-sm text-gray-500 mt-1 line-clamp-2">{task.lessons?.description ?? 'Bé mở bài học này để làm kiểm tra.'}</p>
+                                    <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">
+                                        Hoàn thành +{COMPLETION_XP} XP
+                                    </div>
                                     <div className="mt-4 grid grid-cols-2 gap-2 text-center">
                                         <div className="rounded-xl bg-gray-50 py-2">
                                             <p className="text-[10px] font-black text-gray-400 uppercase">Trang</p>
@@ -388,6 +392,9 @@ function LessonContent() {
                                                             <span className="text-[10px] font-black text-gray-500">{lesson.total_pages} trang</span>
                                                         </div>
                                                         <p className="mt-1 text-xs text-gray-500 line-clamp-2">{lesson.description}</p>
+                                                        <div className="mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-600">
+                                                            Nếu được giao: +{COMPLETION_XP} XP
+                                                        </div>
                                                         <div className="mt-3 flex items-center gap-2">
                                                             <Link
                                                                 href={`/child/lesson?id=${lesson.id}`}
@@ -498,6 +505,11 @@ function LessonContent() {
                                 ? 'Kết quả sẽ được lưu vào backend để hoàn thành nhiệm vụ và tạo phần thưởng.'
                                 : 'Chế độ tự học: làm bài luyện tập theo dữ liệu thật của môn học.'}
                         </p>
+                        {detailSource === 'task' && !isTaskCompleted && (
+                            <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-600">
+                                Hoàn thành +{COMPLETION_XP} XP
+                            </div>
+                        )}
                     </div>
 
                     <Link

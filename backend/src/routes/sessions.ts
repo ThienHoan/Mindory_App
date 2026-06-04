@@ -108,6 +108,15 @@ router.post('/:id/finish', async (req, res) => {
             .update({ status: 'completed' })
             .eq('id', session.task_id);
 
+        // Cộng XP cho bé khi hoàn thành bài học/kiểm tra
+        const xpAwarded = 10;
+        let nextXp: number | null = null;
+        const { data: profile } = await supabaseAdmin.from('profiles').select('xp').eq('id', childId).single();
+        if (profile) {
+            nextXp = (profile.xp || 0) + xpAwarded;
+            await supabaseAdmin.from('profiles').update({ xp: nextXp }).eq('id', childId);
+        }
+
         // Auto-create reward (logic: score >= 70% -> game, còn lại -> music)
         let rewardType = 'music';
         if (quizScore !== undefined && quizTotal !== undefined && quizTotal > 0) {
@@ -129,7 +138,7 @@ router.post('/:id/finish', async (req, res) => {
             console.error('Failed to create reward:', rewardError);
         }
 
-        res.json({ session: updatedSession, reward: reward ?? null });
+        res.json({ session: updatedSession, reward: reward ?? null, xpAwarded, xp: nextXp });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }

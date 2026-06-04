@@ -302,6 +302,18 @@ router.patch('/reward-redemptions/:id', async (req, res) => {
         }
 
         // Nếu rejected: hoàn lại XP cho bé
+        const allowedTransitions: Record<string, string[]> = {
+            requested: ['approved', 'rejected'],
+            approved: ['fulfilled', 'rejected'],
+            fulfilled: [],
+            rejected: [],
+        };
+
+        if (!allowedTransitions[existing.status]?.includes(status)) {
+            res.status(400).json({ error: 'KhÃ´ng thá»ƒ chuyá»ƒn tráº¡ng thÃ¡i yÃªu cáº§u Ä‘á»•i quÃ  nhÆ° váº­y' });
+            return;
+        }
+
         if (status === 'rejected' && existing.status !== 'rejected') {
             const { data: childProfile } = await supabaseAdmin
                 .from('profiles')
@@ -347,6 +359,11 @@ router.patch('/reward-redemptions/:id', async (req, res) => {
 router.patch('/reward-redemptions/:id/fulfill', async (req, res) => {
     const { id } = req.params;
     const { childId } = req.body;
+
+    if (childId) {
+        res.status(403).json({ error: 'Chá»‰ ba/máº¹ má»›i cÃ³ thá»ƒ xÃ¡c nháº­n Ä‘Ã£ trao quÃ ' });
+        return;
+    }
 
     if (!childId) {
         res.status(400).json({ error: 'Thiếu childId' });
