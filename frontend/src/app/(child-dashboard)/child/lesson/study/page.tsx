@@ -28,7 +28,7 @@ interface SavedStudyProgress {
 }
 
 const DEFAULT_STUDY_SECONDS = DEFAULT_FREE_QUIZ_SECONDS
-const IDLE_AFTER_SECONDS = 20
+const IDLE_AFTER_SECONDS = 90
 const PROGRESS_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const STUDY_PROGRESS_PREFIX = 'mindory:study-progress:'
 const RANDOM_GAME_VIEWS = ['memory', 'maze', 'music'] as const
@@ -192,7 +192,7 @@ function StudyContent() {
                 setProgressKey(nextProgressKey)
                 setSessionTotalSeconds(savedProgress?.sessionTotalSeconds ?? sessionSeconds)
                 setStudySecondsRemaining(savedProgress?.studySecondsRemaining ?? sessionSeconds)
-                setFocusSecondsRemaining(savedProgress?.focusSecondsRemaining ?? policy.focusIntervalSeconds)
+                setFocusSecondsRemaining(Math.min(savedProgress?.focusSecondsRemaining ?? policy.focusIntervalSeconds, policy.focusIntervalSeconds))
                 setPhaseSecondsRemaining(savedProgress?.phaseSecondsRemaining ?? 0)
                 setActiveSeconds(nextActiveSeconds)
                 setIdleSeconds(nextIdleSeconds)

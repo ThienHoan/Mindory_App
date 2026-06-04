@@ -141,7 +141,6 @@ function QuizContent() {
     const aiAssignmentId = searchParams.get('aiAssignmentId')
     const aiDocumentId = searchParams.get('aiDocumentId') || searchParams.get('documentId')
     const lessonTitle = searchParams.get('lessonTitle') || 'Kiểm tra bài học'
-    const isAiQuiz = Boolean(aiDocumentId)
     const rawDurationMinutes = Number(searchParams.get('duration'))
     const durationQueryMinutes = Number.isFinite(rawDurationMinutes) && rawDurationMinutes > 0 ? rawDurationMinutes : null
     const defaultPolicy = useMemo<SessionPolicy>(() => buildSessionPolicy({ mode: 'free-quiz' }), [])
@@ -424,6 +423,7 @@ function QuizContent() {
                 if (prev <= 1) {
                     window.clearInterval(timer)
                     setFocusBreakPending(true)
+                    setPhase('choice')
                     return 0
                 }
                 return prev - 1

@@ -9,7 +9,7 @@ import {
     UserIcon,
 } from '@heroicons/react/24/outline'
 import { createClient } from '@/lib/supabase/client'
-import { api } from '@/lib/api-client'
+import { api, type Task } from '@/lib/api-client'
 import {
     DEFAULT_SESSION_DURATION,
     DEFAULT_SESSIONS_PER_DAY,
@@ -166,17 +166,6 @@ function AssignTaskContent() {
 
     const selectedLesson = lessons.find((lesson) => lesson.id === selectedLessonId) || null
 
-    useEffect(() => {
-        if (!selectedLesson) {
-            setStartPage(1)
-            setEndPage(1)
-            return
-        }
-
-        setStartPage(1)
-        setEndPage(Math.min(3, selectedLesson.total_pages || 1))
-    }, [selectedLesson])
-
     const filteredLessons = useMemo(() => {
         if (!searchText.trim()) return lessons
         const keyword = searchText.trim().toLowerCase()
@@ -201,6 +190,12 @@ function AssignTaskContent() {
             }
             return [...prev, childId]
         })
+    }
+
+    const handleSelectLesson = (lesson: LessonItem) => {
+        setSelectedLessonId(lesson.id)
+        setStartPage(1)
+        setEndPage(Math.min(3, lesson.total_pages || 1))
     }
 
     const handleSubmit = async () => {
@@ -400,7 +395,7 @@ function AssignTaskContent() {
                                     <button
                                         key={lesson.id}
                                         type="button"
-                                        onClick={() => setSelectedLessonId(lesson.id)}
+                                        onClick={() => handleSelectLesson(lesson)}
                                         className={cn(
                                             'rounded-2xl border p-4 text-left transition hover:shadow-md',
                                             isActive
