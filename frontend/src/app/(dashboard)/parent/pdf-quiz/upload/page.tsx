@@ -81,7 +81,7 @@ export default function UploadPDFPage() {
                 throw new Error('Cannot create PDF URL')
             }
 
-            await api.aiQuizzes.upload(title, publicData.publicUrl)
+            await api.aiQuizzes.upload(title, publicData.publicUrl, filePath)
             router.push('/parent/pdf-quiz')
         } catch (err: unknown) {
             console.error('Upload process failed:', err)

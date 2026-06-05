@@ -15,6 +15,16 @@ type QuestionStatus = 'pending' | 'approved' | 'rejected';
 const uploadSchema = z.object({
     title: z.string().trim().min(1).max(150),
     fileUrl: z.string().url(),
+    filePath: z.string().trim().min(1).max(500).optional(),
+});
+
+const updateDocumentSchema = z.object({
+    title: z.string().trim().min(1).max(150),
+});
+
+const replaceDocumentFileSchema = z.object({
+    fileUrl: z.string().url(),
+    filePath: z.string().trim().min(1).max(500).optional(),
 });
 
 const aiQuestionSchema = z.object({
@@ -251,6 +261,7 @@ async function isDocumentAssignedToChild(documentId: string, childId: string) {
         .select('id')
         .eq('document_id', documentId)
         .eq('child_id', childId)
+        .neq('status', 'cancelled')
         .maybeSingle();
 
     return !error && !!data;
@@ -270,6 +281,130 @@ async function getOwnedQuestion(questionId: string, parentId: string) {
 
     return questionRow;
 }
+
+async function getCompletedAssignmentCount(documentId: string, parentId: string) {
+    const { count, error } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('id', { count: 'exact', head: true })
+        .eq('document_id', documentId)
+        .eq('parent_id', parentId)
+        .eq('status', 'completed');
+
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+}
+
+async function getActiveAssignmentCount(documentId: string, parentId: string) {
+    const { count, error } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('id', { count: 'exact', head: true })
+        .eq('document_id', documentId)
+        .eq('parent_id', parentId)
+        .neq('status', 'cancelled');
+
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+}
+
+async function deleteQuestionsForRegeneration(documentId: string) {
+    const { data: linkedQuestions, error: linkedError } = await supabaseAdmin
+        .from('pdf_questions')
+        .select('quiz_id')
+        .eq('document_id', documentId);
+
+    if (linkedError) throw new Error(linkedError.message);
+
+    const quizIds = (linkedQuestions ?? [])
+        .map((question) => question.quiz_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+
+    if (quizIds.length > 0) {
+        const { error: quizError } = await supabaseAdmin
+            .from('quizzes')
+            .update({ deleted_at: new Date().toISOString() })
+            .in('id', quizIds);
+        if (quizError) throw new Error(quizError.message);
+    }
+
+    const { error: deleteError } = await supabaseAdmin
+        .from('pdf_questions')
+        .delete()
+        .eq('document_id', documentId);
+
+    if (deleteError) throw new Error(deleteError.message);
+}
+
+async function processPdfDocument(documentId: string, fileUrl: string) {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 25000);
+        const response = await fetch(fileUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
+
+        if (!response.ok) throw new Error('Failed to fetch PDF (HTTP ' + response.status + ')');
+
+        const contentLength = Number(response.headers.get('content-length') ?? '0');
+        if (Number.isFinite(contentLength) && contentLength > 12 * 1024 * 1024) {
+            throw new Error('PDF is too large');
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        const parser = new PDFParse({ data: uint8Array });
+        const textResult = await withTimeout(parser.getText(), 45000, 'PDF parsing');
+        const textContent = typeof textResult.text === 'string' ? textResult.text : String(textResult.text ?? '');
+        await parser.destroy();
+
+        if (!textContent.trim()) {
+            throw new Error('No text found in PDF');
+        }
+
+        const prompt = `You are a Vietnamese educational assistant for primary school children.
+Read the following text extracted from a PDF and generate exactly 3 multiple-choice questions.
+Return ONLY a JSON array where each object has:
+- "question" (string)
+- "options" (array of exactly 4 strings)
+- "correctIndex" (integer 0-3, the index of the correct option in the options array)
+
+Important requirements:
+- All question text and all options MUST be in Vietnamese.
+- Language style must be simple, natural, and suitable for children.
+- Do not include English unless it already appears as a required term in the source.
+- You must generate exactly 3 questions.
+
+Text:
+${textContent.substring(0, 100000)}
+`;
+
+        const aiResponse = await generateWithFallback(prompt);
+
+        const questionsList = parseAIResponse(aiResponse.text ?? '');
+        const inserts = questionsList.map((q) => ({
+            document_id: documentId,
+            question: q.question,
+            options: q.options,
+            correct_index: q.correctIndex,
+            status: 'pending' as QuestionStatus
+        }));
+
+        const { error: insertError } = await supabaseAdmin.from('pdf_questions').insert(inserts);
+        if (insertError) {
+            throw new Error('Failed to save generated questions');
+        }
+
+        await supabaseAdmin
+            .from('pdf_documents')
+            .update({ status: 'completed', updated_at: new Date().toISOString() })
+            .eq('id', documentId);
+    } catch (error: any) {
+        console.error('AI Processing Error:', { documentId, fileUrl, error });
+        await supabaseAdmin
+            .from('pdf_documents')
+            .update({ status: 'error', updated_at: new Date().toISOString() })
+            .eq('id', documentId);
+    }
+}
+
 async function syncApprovedQuestionToLessonQuiz(questionId: string) {
     const { data: row, error } = await supabaseAdmin
         .from('pdf_questions')
@@ -337,7 +472,7 @@ async function syncApprovedQuestionToLessonQuiz(questionId: string) {
 }
 // POST /ai-quiz/upload
 router.post('/upload', authenticate, requireRole('parent'), validate(uploadSchema), async (req, res) => {
-    const { title, fileUrl } = req.body;
+    const { title, fileUrl, filePath } = req.body;
     const parentId = req.user!.id;
 
     if (!isAllowedFileUrl(fileUrl)) {
@@ -346,7 +481,7 @@ router.post('/upload', authenticate, requireRole('parent'), validate(uploadSchem
     }
 
     const { data: doc, error: docError } = await supabaseAdmin.from('pdf_documents')
-        .insert({ parent_id: parentId, lesson_id: null, title, file_url: fileUrl, status: 'processing' })
+        .insert({ parent_id: parentId, lesson_id: null, title, file_url: fileUrl, file_path: filePath ?? null, status: 'processing' })
         .select().single();
 
     if (docError || !doc) {
@@ -355,68 +490,161 @@ router.post('/upload', authenticate, requireRole('parent'), validate(uploadSchem
     }
 
     res.status(202).json({ documentId: doc.id, message: 'Processing started' });
+    void processPdfDocument(doc.id, fileUrl);
+});
+
+// PATCH /ai-quiz/documents/:id
+router.patch('/documents/:id', authenticate, requireRole('parent'), validate(updateDocumentSchema), async (req, res) => {
+    const documentId = getParamId(req.params.id);
+    const parentId = req.user!.id;
+    const { title } = req.body;
+
+    const owned = await isDocumentOwnedByParent(documentId, parentId);
+    if (!owned) {
+        res.status(403).json({ error: 'Access denied to this document' });
+        return;
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('pdf_documents')
+        .update({ title, updated_at: new Date().toISOString() })
+        .eq('id', documentId)
+        .eq('parent_id', parentId)
+        .select()
+        .single();
+
+    if (error || !data) {
+        res.status(500).json({ error: error?.message ?? 'Failed to update document' });
+        return;
+    }
+
+    res.json(data);
+});
+
+// POST /ai-quiz/documents/:id/replace-file
+router.post('/documents/:id/replace-file', authenticate, requireRole('parent'), validate(replaceDocumentFileSchema), async (req, res) => {
+    const documentId = getParamId(req.params.id);
+    const parentId = req.user!.id;
+    const { fileUrl, filePath } = req.body;
+
+    if (!isAllowedFileUrl(fileUrl)) {
+        res.status(400).json({ error: 'Invalid file URL' });
+        return;
+    }
+
+    const owned = await isDocumentOwnedByParent(documentId, parentId);
+    if (!owned) {
+        res.status(403).json({ error: 'Access denied to this document' });
+        return;
+    }
 
     try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 25000);
-        const response = await fetch(fileUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
-
-        if (!response.ok) throw new Error('Failed to fetch PDF (HTTP ' + response.status + ')');
-
-        const contentLength = Number(response.headers.get('content-length') ?? '0');
-        if (Number.isFinite(contentLength) && contentLength > 12 * 1024 * 1024) {
-            throw new Error('PDF is too large');
+        const completedCount = await getCompletedAssignmentCount(documentId, parentId);
+        if (completedCount > 0) {
+            res.status(409).json({ error: 'Cannot replace a PDF after a child has completed this assignment' });
+            return;
         }
 
-        const arrayBuffer = await response.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
+        const { data: currentDocument, error: currentDocumentError } = await supabaseAdmin
+            .from('pdf_documents')
+            .select('version')
+            .eq('id', documentId)
+            .eq('parent_id', parentId)
+            .single();
 
-        const parser = new PDFParse({ data: uint8Array });
-        const textResult = await withTimeout(parser.getText(), 45000, 'PDF parsing');
-        const textContent = typeof textResult.text === 'string' ? textResult.text : String(textResult.text ?? '');
-        await parser.destroy();
-
-        if (!textContent.trim()) {
-            throw new Error('No text found in PDF');
+        if (currentDocumentError || !currentDocument) {
+            res.status(404).json({ error: 'Document not found' });
+            return;
         }
 
-        const prompt = `You are a Vietnamese educational assistant for primary school children.
-Read the following text extracted from a PDF and generate exactly 3 multiple-choice questions.
-Return ONLY a JSON array where each object has:
-- "question" (string)
-- "options" (array of exactly 4 strings)
-- "correctIndex" (integer 0-3, the index of the correct option in the options array)
+        await deleteQuestionsForRegeneration(documentId);
 
-Important requirements:
-- All question text and all options MUST be in Vietnamese.
-- Language style must be simple, natural, and suitable for children.
-- Do not include English unless it already appears as a required term in the source.
-- You must generate exactly 3 questions.
+        const { data, error } = await supabaseAdmin
+            .from('pdf_documents')
+            .update({
+                file_url: fileUrl,
+                file_path: filePath ?? null,
+                status: 'processing',
+                version: (currentDocument.version ?? 1) + 1,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', documentId)
+            .eq('parent_id', parentId)
+            .select()
+            .single();
 
-Text:
-${textContent.substring(0, 100000)}
-`;
-
-        const aiResponse = await generateWithFallback(prompt);
-
-        const questionsList = parseAIResponse(aiResponse.text ?? '');
-        const inserts = questionsList.map((q) => ({
-            document_id: doc.id,
-            question: q.question,
-            options: q.options,
-            correct_index: q.correctIndex,
-            status: 'pending' as QuestionStatus
-        }));
-
-        const { error: insertError } = await supabaseAdmin.from('pdf_questions').insert(inserts);
-        if (insertError) {
-            throw new Error('Failed to save generated questions');
+        if (error || !data) {
+            res.status(500).json({ error: error?.message ?? 'Failed to replace PDF' });
+            return;
         }
 
-        await supabaseAdmin.from('pdf_documents').update({ status: 'completed' }).eq('id', doc.id);
-    } catch (error: any) {
-        console.error('AI Processing Error:', { documentId: doc.id, fileUrl, error });
-        await supabaseAdmin.from('pdf_documents').update({ status: 'error' }).eq('id', doc.id);
+        res.status(202).json({ document: data, message: 'Reprocessing started' });
+        void processPdfDocument(documentId, fileUrl);
+    } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to replace PDF' });
+    }
+});
+
+// DELETE /ai-quiz/documents/:id
+router.delete('/documents/:id', authenticate, requireRole('parent'), async (req, res) => {
+    const documentId = getParamId(req.params.id);
+    const parentId = req.user!.id;
+
+    const { data: document, error: documentError } = await supabaseAdmin
+        .from('pdf_documents')
+        .select('id, parent_id, file_path')
+        .eq('id', documentId)
+        .eq('parent_id', parentId)
+        .maybeSingle();
+
+    if (documentError || !document) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+    }
+
+    try {
+        const completedCount = await getCompletedAssignmentCount(documentId, parentId);
+        if (completedCount > 0) {
+            res.status(409).json({ error: 'Cannot delete a document after a child has completed an assignment' });
+            return;
+        }
+
+        const activeAssignmentCount = await getActiveAssignmentCount(documentId, parentId);
+
+        if (activeAssignmentCount > 0) {
+            const { error: cancelError } = await supabaseAdmin
+                .from('assigned_ai_quizzes')
+                .update({ status: 'cancelled' })
+                .eq('document_id', documentId)
+                .eq('parent_id', parentId)
+                .neq('status', 'completed');
+
+            if (cancelError) throw new Error(cancelError.message);
+        }
+
+        await deleteQuestionsForRegeneration(documentId);
+
+        const { error: deleteDocumentError } = await supabaseAdmin
+            .from('pdf_documents')
+            .delete()
+            .eq('id', documentId)
+            .eq('parent_id', parentId);
+
+        if (deleteDocumentError) throw new Error(deleteDocumentError.message);
+
+        if (document.file_path) {
+            const { error: storageError } = await supabaseAdmin.storage
+                .from('pdfs')
+                .remove([document.file_path]);
+
+            if (storageError) {
+                console.warn('[ai-quiz] failed to delete PDF storage object', { documentId, filePath: document.file_path, error: storageError });
+            }
+        }
+
+        res.json({ success: true, cancelledAssignments: activeAssignmentCount });
+    } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to delete document' });
     }
 });
 
@@ -656,13 +884,15 @@ router.get('/documents/:id/playable', authenticate, requireRole('child', 'parent
     }
 
     if (req.user!.role === 'child') {
-        const { data: childProfile, error: profileError } = await supabaseAdmin
-            .from('profiles')
-            .select('parent_id')
-            .eq('id', req.user!.id)
+        const { data: assignment, error: assignmentError } = await supabaseAdmin
+            .from('assigned_ai_quizzes')
+            .select('id')
+            .eq('document_id', documentId)
+            .eq('child_id', req.user!.id)
+            .neq('status', 'cancelled')
             .maybeSingle();
 
-        if (profileError || !childProfile || childProfile.parent_id !== doc.parent_id) {
+        if (assignmentError || !assignment) {
             res.status(403).json({ error: 'Access denied to this document' });
             return;
         }
@@ -684,4 +914,3 @@ router.get('/documents/:id/playable', authenticate, requireRole('child', 'parent
 });
 
 export default router;
-

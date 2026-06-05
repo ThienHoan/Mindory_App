@@ -603,7 +603,7 @@ function QuizContent() {
 
     if (!lessonId && !aiDocumentId) {
         const activeTasks = tasks.filter((task) => task.status !== 'completed')
-        const activeAiAssignments = aiAssignments.filter((assignment) => assignment.status !== 'completed')
+        const activeAiAssignments = aiAssignments.filter((assignment) => assignment.status === 'assigned')
 
         return (
             <div className="max-w-6xl mx-auto p-8 space-y-7">

@@ -97,8 +97,11 @@ export interface AIQuizDocument {
     parent_id: string
     title: string
     file_url: string
+    file_path?: string | null
     status: 'processing' | 'completed' | 'error'
     created_at: string
+    updated_at?: string | null
+    version?: number
 }
 
 export interface AIQuizQuestion {
@@ -117,7 +120,7 @@ export interface AIQuizPlayable {
     questions: Pick<AIQuizQuestion, 'id' | 'question' | 'options' | 'correct_index'>[]
 }
 
-export type AIAssignmentStatus = 'assigned' | 'completed'
+export type AIAssignmentStatus = 'assigned' | 'completed' | 'cancelled'
 
 export interface AIAssignment {
     id: string
@@ -436,11 +439,11 @@ export const api = {
         },
     },
     aiQuizzes: {
-        upload: async (title: string, fileUrl: string): Promise<{ documentId: string }> => {
+        upload: async (title: string, fileUrl: string, filePath?: string): Promise<{ documentId: string }> => {
             const raw = await requestJson<unknown>('/ai-quiz/upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, fileUrl }),
+                body: JSON.stringify({ title, fileUrl, filePath }),
             })
             return normalizeObjectResponse<{ documentId: string }>(raw)
         },
@@ -455,6 +458,28 @@ export const api = {
         getDocument: async (id: string): Promise<AIQuizDocument> => {
             const raw = await requestJson<unknown>(`/ai-quiz/documents/${id}`)
             return normalizeObjectResponse<AIQuizDocument>(raw)
+        },
+        updateDocument: async (id: string, payload: { title: string }): Promise<AIQuizDocument> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/documents/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+            return normalizeObjectResponse<AIQuizDocument>(raw)
+        },
+        replaceDocumentFile: async (id: string, payload: { fileUrl: string; filePath?: string }): Promise<{ document: AIQuizDocument; message?: string }> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/documents/${id}/replace-file`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+            return normalizeObjectResponse<{ document: AIQuizDocument; message?: string }>(raw)
+        },
+        deleteDocument: async (id: string): Promise<{ success: boolean; cancelledAssignments?: number }> => {
+            const raw = await requestJson<unknown>(`/ai-quiz/documents/${id}`, {
+                method: 'DELETE',
+            })
+            return normalizeObjectResponse<{ success: boolean; cancelledAssignments?: number }>(raw)
         },
         listQuestions: async (documentId: string): Promise<AIQuizQuestion[]> => {
             const raw = await requestJson<unknown>(`/ai-quiz/documents/${documentId}/questions`)
@@ -547,6 +572,14 @@ export const api = {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'completed' }),
+            })
+            return normalizeObjectResponse<AIAssignment>(raw)
+        },
+        cancel: async (assignmentId: string): Promise<AIAssignment> => {
+            const raw = await requestJson<unknown>(`/ai-assignments/${assignmentId}/cancel`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'cancelled' }),
             })
             return normalizeObjectResponse<AIAssignment>(raw)
         },
@@ -643,5 +676,3 @@ export const api = {
         },
     },
 }
-
-

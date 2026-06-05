@@ -343,7 +343,7 @@ function StudyContent() {
 
                 if (!loadedTask && isAiStudy) {
                     const assignments = await api.aiAssignments.listMine()
-                    const assignment = assignments.find((item) => (
+                    const assignment = assignments.find((item) => item.status === 'assigned' && (
                         (aiAssignmentId && item.id === aiAssignmentId) ||
                         (aiDocumentId && item.document_id === aiDocumentId)
                     ))

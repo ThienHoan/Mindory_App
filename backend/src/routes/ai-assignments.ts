@@ -16,6 +16,10 @@ const completeAssignmentSchema = z.object({
     status: z.literal('completed'),
 });
 
+const cancelAssignmentSchema = z.object({
+    status: z.literal('cancelled').optional(),
+});
+
 // POST /ai-assignments
 router.post('/', authenticate, requireRole('parent'), validate(createAssignmentSchema), async (req, res) => {
     const { documentId, childId } = req.body;
@@ -62,6 +66,23 @@ router.post('/', authenticate, requireRole('parent'), validate(createAssignmentS
         .maybeSingle();
 
     if (existing) {
+        if (existing.status === 'cancelled') {
+            const { data: reactivated, error: reactivateError } = await supabaseAdmin
+                .from('assigned_ai_quizzes')
+                .update({ status: 'assigned', assigned_at: new Date().toISOString(), completed_at: null })
+                .eq('id', existing.id)
+                .select('*')
+                .single();
+
+            if (reactivateError || !reactivated) {
+                res.status(500).json({ error: reactivateError?.message ?? 'Failed to assign quiz' });
+                return;
+            }
+
+            res.json(reactivated);
+            return;
+        }
+
         res.json(existing);
         return;
     }
@@ -113,6 +134,7 @@ router.get('/mine', authenticate, requireRole('child'), async (req, res) => {
         .from('assigned_ai_quizzes')
         .select('*, profiles!assigned_ai_quizzes_parent_id_fkey(id, full_name, email)')
         .eq('child_id', childId)
+        .neq('status', 'cancelled')
         .order('assigned_at', { ascending: false });
 
     if (error) {
@@ -171,6 +193,11 @@ router.patch('/:id/complete', authenticate, requireRole('child'), validate(compl
         return;
     }
 
+    if (assignment.status === 'cancelled') {
+        res.status(409).json({ error: 'Assignment has been cancelled' });
+        return;
+    }
+
     const { data, error } = await supabaseAdmin
         .from('assigned_ai_quizzes')
         .update({ status: 'completed', completed_at: new Date().toISOString() })
@@ -193,6 +220,49 @@ router.patch('/:id/complete', authenticate, requireRole('child'), validate(compl
     }
 
     res.json({ ...data, xpAwarded, xp: nextXp });
+});
+
+// PATCH /ai-assignments/:id/cancel
+router.patch('/:id/cancel', authenticate, requireRole('parent'), validate(cancelAssignmentSchema), async (req, res) => {
+    const assignmentId = req.params.id;
+    const parentId = req.user!.id;
+
+    const { data: assignment, error: findError } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .select('*')
+        .eq('id', assignmentId)
+        .eq('parent_id', parentId)
+        .maybeSingle();
+
+    if (findError || !assignment) {
+        res.status(404).json({ error: 'Assignment not found' });
+        return;
+    }
+
+    if (assignment.status === 'completed') {
+        res.status(409).json({ error: 'Cannot cancel a completed assignment' });
+        return;
+    }
+
+    if (assignment.status === 'cancelled') {
+        res.json(assignment);
+        return;
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('assigned_ai_quizzes')
+        .update({ status: 'cancelled' })
+        .eq('id', assignmentId)
+        .eq('parent_id', parentId)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        res.status(500).json({ error: error?.message ?? 'Failed to cancel assignment' });
+        return;
+    }
+
+    res.json(data);
 });
 
 export default router;

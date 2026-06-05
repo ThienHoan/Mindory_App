@@ -10,8 +10,10 @@ import {
     FileText,
     ListChecks,
     Plus,
+    Trash2,
     UploadCloud,
     UsersRound,
+    XCircle,
 } from 'lucide-react'
 import { api, type AIAssignment, type AIQuizDocument } from '@/lib/api-client'
 import { createClient } from '@/lib/supabase/client'
@@ -28,6 +30,7 @@ const documentStatusMeta: Record<AIQuizDocument['status'], { label: string; clas
 const assignmentStatusMeta: Record<AIAssignment['status'], { label: string; className: string }> = {
     assigned: { label: 'Chưa làm', className: 'border-amber-200 bg-amber-50 text-amber-700' },
     completed: { label: 'Đã hoàn thành', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+    cancelled: { label: 'Đã hủy', className: 'border-slate-200 bg-slate-100 text-slate-600' },
 }
 
 function formatDate(value?: string | null) {
@@ -44,7 +47,11 @@ function getAssignmentChildName(assignment: AIAssignment) {
 }
 
 function getAssignmentDocumentTitle(assignment: AIAssignment, documents: AIQuizDocument[]) {
-    return assignment.pdf_documents?.title || documents.find((doc) => doc.id === assignment.document_id)?.title || 'Bài AI'
+    const assignmentDocument = Array.isArray(assignment.pdf_documents)
+        ? assignment.pdf_documents[0]
+        : assignment.pdf_documents
+
+    return assignmentDocument?.title || documents.find((doc) => doc.id === assignment.document_id)?.title || 'Bài AI'
 }
 
 export default function PDFQuizDashboard() {
@@ -54,6 +61,7 @@ export default function PDFQuizDashboard() {
     const [activeTab, setActiveTab] = useState<ActiveTab>('documents')
     const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all')
     const [copiedAssignmentId, setCopiedAssignmentId] = useState<string | null>(null)
+    const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null)
     const supabase = useMemo(() => createClient(), [])
 
     const loadDashboard = useCallback(async (showLoading = true) => {
@@ -78,7 +86,7 @@ export default function PDFQuizDashboard() {
 
     useEffect(() => {
         const hasProcessingDocument = documents.some((doc) => doc.status === 'processing')
-        const hasIncompleteAssignment = assignments.some((assignment) => assignment.status !== 'completed')
+        const hasIncompleteAssignment = assignments.some((assignment) => assignment.status === 'assigned')
         if (!hasProcessingDocument && !hasIncompleteAssignment) return
 
         const intervalId = window.setInterval(() => {
@@ -119,8 +127,9 @@ export default function PDFQuizDashboard() {
     }, [loadDashboard, supabase])
 
     const processingCount = documents.filter((doc) => doc.status === 'processing').length
+    const activeAssignments = assignments.filter((assignment) => assignment.status !== 'cancelled')
     const completedAssignments = assignments.filter((assignment) => assignment.status === 'completed').length
-    const incompleteAssignments = assignments.length - completedAssignments
+    const incompleteAssignments = assignments.filter((assignment) => assignment.status === 'assigned').length
 
     const sortedAssignments = useMemo(
         () => [...assignments].sort((a, b) => new Date(b.assigned_at).getTime() - new Date(a.assigned_at).getTime()),
@@ -138,6 +147,49 @@ export default function PDFQuizDashboard() {
         await navigator.clipboard.writeText(url)
         setCopiedAssignmentId(assignment.id)
         window.setTimeout(() => setCopiedAssignmentId(null), 2000)
+    }
+
+    const handleCancelAssignment = async (assignment: AIAssignment) => {
+        const yes = window.confirm('Bạn muốn hủy bài đã giao này? Bé sẽ không còn thấy bài trong danh sách cần làm.')
+        if (!yes) return
+
+        try {
+            const cancelled = await api.aiAssignments.cancel(assignment.id)
+            setAssignments((prev) => prev.map((item) => item.id === assignment.id ? cancelled : item))
+        } catch (error) {
+            console.error('Cancel assignment failed:', error)
+            alert('Không thể hủy bài đã giao. Chỉ hủy được bài chưa hoàn thành.')
+        }
+    }
+
+    const handleDeleteDocument = async (doc: AIQuizDocument) => {
+        const docAssignments = assignments.filter((assignment) => assignment.document_id === doc.id)
+        const completedCount = docAssignments.filter((assignment) => assignment.status === 'completed').length
+        const activeCount = docAssignments.filter((assignment) => assignment.status !== 'cancelled').length
+
+        if (completedCount > 0) {
+            alert('Không thể xóa tài liệu vì đã có bé hoàn thành bài này. Hãy giữ lại để bảo toàn lịch sử học tập.')
+            return
+        }
+
+        const message = activeCount > 0
+            ? `Tài liệu "${doc.title}" đã được giao cho ${activeCount} bé. Xóa tài liệu sẽ hủy các bài đã giao chưa hoàn thành và xóa câu hỏi liên quan. Bạn muốn tiếp tục?`
+            : `Bạn muốn xóa tài liệu "${doc.title}"? Thao tác này sẽ xóa câu hỏi liên quan và không thể hoàn tác.`
+
+        const yes = window.confirm(message)
+        if (!yes) return
+
+        setDeletingDocumentId(doc.id)
+        try {
+            await api.aiQuizzes.deleteDocument(doc.id)
+            setDocuments((prev) => prev.filter((item) => item.id !== doc.id))
+            setAssignments((prev) => prev.filter((assignment) => assignment.document_id !== doc.id))
+        } catch (error) {
+            console.error('Delete document failed:', error)
+            alert('Không thể xóa tài liệu. Nếu đã có bé hoàn thành bài, hệ thống sẽ không cho xóa để giữ lịch sử.')
+        } finally {
+            setDeletingDocumentId(null)
+        }
     }
 
     return (
@@ -183,7 +235,7 @@ export default function PDFQuizDashboard() {
                         <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400">Đã giao</p>
                         <UsersRound className="h-5 w-5 text-violet-500" />
                     </div>
-                    <p className="mt-2 text-2xl font-black text-slate-900">{assignments.length}</p>
+                    <p className="mt-2 text-2xl font-black text-slate-900">{activeAssignments.length}</p>
                     <p className="mt-1 text-xs text-slate-500">Lượt giao bài cho bé</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -239,6 +291,9 @@ export default function PDFQuizDashboard() {
                             const statusMeta = documentStatusMeta[doc.status]
                             const docAssignments = assignments.filter((assignment) => assignment.document_id === doc.id)
                             const docCompletedCount = docAssignments.filter((assignment) => assignment.status === 'completed').length
+                            const docActiveAssignmentCount = docAssignments.filter((assignment) => assignment.status !== 'cancelled').length
+                            const canDeleteDocument = docCompletedCount === 0
+                            const isDeletingDocument = deletingDocumentId === doc.id
 
                             return (
                                 <div key={doc.id} className="flex min-h-[260px] flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -255,15 +310,15 @@ export default function PDFQuizDashboard() {
                                     <div className="mt-5 grid grid-cols-2 gap-2 text-center text-xs font-bold">
                                         <div className="rounded-xl bg-indigo-50 px-2 py-3 text-indigo-700">
                                             <p className="text-[10px] uppercase tracking-[0.1em] text-indigo-400">Đã giao</p>
-                                            <p className="mt-1 text-base">{docAssignments.length} bé</p>
+                                            <p className="mt-1 text-base">{docActiveAssignmentCount} bé</p>
                                         </div>
                                         <div className="rounded-xl bg-emerald-50 px-2 py-3 text-emerald-700">
                                             <p className="text-[10px] uppercase tracking-[0.1em] text-emerald-400">Đã làm</p>
-                                            <p className="mt-1 text-base">{docCompletedCount}/{docAssignments.length}</p>
+                                            <p className="mt-1 text-base">{docCompletedCount}/{docActiveAssignmentCount}</p>
                                         </div>
                                     </div>
 
-                                    <div className="mt-auto pt-5">
+                                    <div className="mt-auto grid gap-2 pt-5">
                                         {doc.status === 'completed' ? (
                                             <Link
                                                 href={`/parent/pdf-quiz/${doc.id}`}
@@ -281,6 +336,17 @@ export default function PDFQuizDashboard() {
                                                 <AlertCircle className="h-4 w-4" />
                                                 Cần tải lại PDF
                                             </div>
+                                        )}
+                                        {canDeleteDocument && (
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleDeleteDocument(doc)}
+                                                disabled={isDeletingDocument}
+                                                className={`inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-55 ${doc.status === 'error' ? 'border-rose-200 bg-white text-rose-600 hover:bg-rose-50' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                                {isDeletingDocument ? 'Đang xóa...' : 'Xóa tài liệu'}
+                                            </button>
                                         )}
                                     </div>
                                 </div>
@@ -300,6 +366,7 @@ export default function PDFQuizDashboard() {
                                 ['all', 'Tất cả'],
                                 ['assigned', 'Chưa làm'],
                                 ['completed', 'Đã hoàn thành'],
+                                ['cancelled', 'Đã hủy'],
                             ] as const).map(([value, label]) => (
                                 <button
                                     key={value}
@@ -348,14 +415,26 @@ export default function PDFQuizDashboard() {
                                                 </span>
                                             </div>
                                             <div className="flex flex-wrap gap-2 lg:justify-end">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => void handleCopyAssignmentLink(assignment)}
-                                                    className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100"
-                                                >
-                                                    <Copy className="h-4 w-4" />
-                                                    {copiedAssignmentId === assignment.id ? 'Đã copy' : 'Copy link'}
-                                                </button>
+                                                {assignment.status !== 'cancelled' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCopyAssignmentLink(assignment)}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100"
+                                                    >
+                                                        <Copy className="h-4 w-4" />
+                                                        {copiedAssignmentId === assignment.id ? 'Đã copy' : 'Copy link'}
+                                                    </button>
+                                                )}
+                                                {assignment.status === 'assigned' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCancelAssignment(assignment)}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-600 transition hover:bg-rose-50"
+                                                    >
+                                                        <XCircle className="h-4 w-4" />
+                                                        Hủy
+                                                    </button>
+                                                )}
                                                 <Link
                                                     href={`/parent/pdf-quiz/${assignment.document_id}`}
                                                     className="inline-flex items-center rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-200"

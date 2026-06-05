@@ -4,10 +4,13 @@ import { useCallback, useEffect, useMemo, useState, use } from 'react'
 import Link from 'next/link'
 import {
     ArrowLeft,
+    AlertTriangle,
     CheckCircle,
     CheckCircle2,
     Clock3,
     FileQuestion,
+    FileUp,
+    Loader2,
     Pencil,
     Play,
     Plus,
@@ -45,6 +48,7 @@ const questionStatusMeta: Record<QuestionStatus, { label: string; className: str
 const assignmentStatusMeta: Record<AIAssignment['status'], { label: string; className: string }> = {
     assigned: { label: 'Chưa làm', className: 'border-amber-200 bg-amber-50 text-amber-700' },
     completed: { label: 'Đã hoàn thành', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+    cancelled: { label: 'Đã hủy', className: 'border-slate-200 bg-slate-100 text-slate-600' },
 }
 
 function makeEmptyDraft(): QuestionDraft {
@@ -99,6 +103,11 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     const [assignments, setAssignments] = useState<AIAssignment[]>([])
     const [assigning, setAssigning] = useState(false)
     const [assignError, setAssignError] = useState('')
+    const [titleDraft, setTitleDraft] = useState('')
+    const [savingTitle, setSavingTitle] = useState(false)
+    const [replaceFile, setReplaceFile] = useState<File | null>(null)
+    const [replacingFile, setReplacingFile] = useState(false)
+    const [documentError, setDocumentError] = useState('')
 
     const [creating, setCreating] = useState(false)
     const [newDraft, setNewDraft] = useState<QuestionDraft>(makeEmptyDraft())
@@ -119,6 +128,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                 api.aiAssignments.listParent({ documentId: id })
             ])
             setDocument(doc)
+            setTitleDraft(doc.title)
             setQuestions(qs)
             setAssignments(assignmentData)
         } catch (error) {
@@ -131,6 +141,16 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     useEffect(() => {
         void loadData()
     }, [loadData])
+
+    useEffect(() => {
+        if (document?.status !== 'processing') return
+
+        const intervalId = window.setInterval(() => {
+            void loadData()
+        }, 5000)
+
+        return () => window.clearInterval(intervalId)
+    }, [document?.status, loadData])
 
     useEffect(() => {
         const channel = supabase
@@ -150,7 +170,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     }, [id, loadAssignments, supabase])
 
     useEffect(() => {
-        const hasIncompleteAssignment = assignments.some((assignment) => assignment.status !== 'completed')
+        const hasIncompleteAssignment = assignments.some((assignment) => assignment.status === 'assigned')
         if (!hasIncompleteAssignment) return
 
         const intervalId = window.setInterval(() => {
@@ -313,10 +333,14 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
     const pendingCount = questions.filter((q) => q.status === 'pending').length
     const rejectedCount = questions.filter((q) => q.status === 'rejected').length
     const completedAssignments = assignments.filter((assignment) => assignment.status === 'completed').length
+    const activeAssignments = assignments.filter((assignment) => assignment.status !== 'cancelled')
     const selectedChild = children.find((child) => child.id === selectedChildId) || null
-    const selectedAssignment = assignments.find((assignment) => assignment.child_id === selectedChildId) || null
+    const selectedAssignment = activeAssignments.find((assignment) => assignment.child_id === selectedChildId) || null
     const selectedChildHasAssignment = Boolean(selectedAssignment)
     const selectedAssignmentComplete = selectedAssignment?.status === 'completed'
+    const hasCompletedAssignment = assignments.some((assignment) => assignment.status === 'completed')
+    const hasAnyAssignment = activeAssignments.length > 0
+    const documentReady = document?.status === 'completed'
     const childQuizPath = selectedAssignment
         ? `/child/pdf-quiz/${id}?assignmentId=${selectedAssignment.id}`
         : `/child/pdf-quiz/${id}`
@@ -340,6 +364,10 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
             setAssignError('Vui lòng chọn bé để giao bài.')
             return
         }
+        if (!documentReady) {
+            setAssignError('Tài liệu đang xử lý, vui lòng đợi AI tạo lại câu hỏi trước khi giao bài.')
+            return
+        }
         if (selectedChildHasAssignment) {
             setAssignError('Bé này đã có bài được giao. Bạn có thể copy link riêng hoặc theo dõi trạng thái bên dưới.')
             return
@@ -354,6 +382,128 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
             setAssignError('Không thể giao bài cho bé. Vui lòng thử lại.')
         } finally {
             setAssigning(false)
+        }
+    }
+
+    const handleCancelAssignment = async (assignmentId: string) => {
+        const yes = window.confirm('Bạn muốn hủy bài đã giao này? Bé sẽ không còn thấy bài trong danh sách cần làm.')
+        if (!yes) return
+
+        try {
+            const cancelled = await api.aiAssignments.cancel(assignmentId)
+            setAssignments((prev) => prev.map((assignment) => assignment.id === assignmentId ? cancelled : assignment))
+            setAssignError('')
+        } catch (error) {
+            console.error('Cancel assignment failed:', error)
+            setAssignError('Không thể hủy bài đã giao. Chỉ hủy được bài chưa hoàn thành.')
+        }
+    }
+
+    const handleSaveTitle = async () => {
+        if (!document) return
+        const nextTitle = titleDraft.trim()
+        if (!nextTitle) {
+            setDocumentError('Tên tài liệu không được để trống.')
+            return
+        }
+        if (nextTitle === document.title) return
+
+        setSavingTitle(true)
+        setDocumentError('')
+        try {
+            const updated = await api.aiQuizzes.updateDocument(id, { title: nextTitle })
+            setDocument(updated)
+            setTitleDraft(updated.title)
+        } catch (error) {
+            console.error('Update document title failed:', error)
+            setDocumentError('Không thể đổi tên tài liệu. Vui lòng thử lại.')
+        } finally {
+            setSavingTitle(false)
+        }
+    }
+
+    const handleReplaceFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const selectedFile = event.target.files?.[0]
+        if (!selectedFile) return
+
+        if (selectedFile.type !== 'application/pdf') {
+            setDocumentError('Vui lòng chọn file định dạng PDF.')
+            setReplaceFile(null)
+            return
+        }
+
+        if (selectedFile.size > 10 * 1024 * 1024) {
+            setDocumentError('Kích thước file không được vượt quá 10MB.')
+            setReplaceFile(null)
+            return
+        }
+
+        setDocumentError('')
+        setReplaceFile(selectedFile)
+    }
+
+    const handleReplaceFile = async () => {
+        if (!replaceFile) {
+            setDocumentError('Vui lòng chọn file PDF mới.')
+            return
+        }
+        if (hasCompletedAssignment) {
+            setDocumentError('Không thể thay PDF vì đã có bé hoàn thành bài này. Hãy tạo tài liệu mới để giữ đúng lịch sử học tập.')
+            return
+        }
+        if (hasAnyAssignment) {
+            const yes = window.confirm('PDF này đã được giao cho bé. Nếu thay file, câu hỏi cũ sẽ bị tạo lại và bài đã giao sẽ thay đổi. Bạn muốn tiếp tục?')
+            if (!yes) return
+        }
+
+        setReplacingFile(true)
+        setDocumentError('')
+        try {
+            const {
+                data: { user },
+                error: authError,
+            } = await supabase.auth.getUser()
+
+            if (authError || !user) {
+                throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.')
+            }
+
+            const fileExt = replaceFile.name.split('.').pop() || 'pdf'
+            const fileName = `${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${fileExt}`
+            const filePath = `${user.id}/user_uploads/${fileName}`
+
+            const { error: uploadError } = await supabase.storage
+                .from('pdfs')
+                .upload(filePath, replaceFile, {
+                    cacheControl: '3600',
+                    upsert: false,
+                    contentType: 'application/pdf',
+                })
+
+            if (uploadError) throw new Error(uploadError.message)
+
+            const { data: publicData } = supabase.storage
+                .from('pdfs')
+                .getPublicUrl(filePath)
+
+            if (!publicData?.publicUrl) {
+                throw new Error('Cannot create PDF URL')
+            }
+
+            const result = await api.aiQuizzes.replaceDocumentFile(id, {
+                fileUrl: publicData.publicUrl,
+                filePath,
+            })
+
+            setDocument(result.document)
+            setQuestions([])
+            setReplaceFile(null)
+            await loadData()
+        } catch (error) {
+            console.error('Replace PDF failed:', error)
+            setDocumentError(error instanceof Error ? error.message : 'Không thể thay PDF. Vui lòng thử lại.')
+        } finally {
+            setReplacingFile(false)
         }
     }
 
@@ -413,7 +563,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                         <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400">Đã giao</p>
                         <UsersRound className="h-5 w-5 text-violet-500" />
                     </div>
-                    <p className="mt-2 text-2xl font-black text-slate-900">{assignments.length}</p>
+                    <p className="mt-2 text-2xl font-black text-slate-900">{activeAssignments.length}</p>
                     <p className="mt-1 text-xs text-slate-500">Bé đã nhận bài</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -422,9 +572,22 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                         <CheckCircle className="h-5 w-5 text-emerald-500" />
                     </div>
                     <p className="mt-2 text-2xl font-black text-slate-900">{completedAssignments}</p>
-                    <p className="mt-1 text-xs text-slate-500">{completedAssignments}/{assignments.length || 0} bé đã làm xong</p>
+                    <p className="mt-1 text-xs text-slate-500">{completedAssignments}/{activeAssignments.length || 0} bé đã làm xong</p>
                 </div>
             </div>
+
+            {document.status !== 'completed' && (
+                <div className={`rounded-2xl border p-4 text-sm font-semibold ${document.status === 'processing' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                    <div className="flex items-start gap-3">
+                        {document.status === 'processing' ? <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin" /> : <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />}
+                        <p>
+                            {document.status === 'processing'
+                                ? 'Tài liệu đang được AI phân tích. Câu hỏi mới sẽ xuất hiện sau khi xử lý xong.'
+                                : 'Tài liệu xử lý lỗi. Bạn có thể thay PDF mới để hệ thống phân tích lại.'}
+                        </p>
+                    </div>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <main className="space-y-5">
@@ -441,6 +604,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                                         setCreating((prev) => !prev)
                                         setNewDraft(makeEmptyDraft())
                                     }}
+                                    disabled={!documentReady}
                                     className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100"
                                 >
                                     <Plus className="h-4 w-4" />
@@ -450,6 +614,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                                     <button
                                         type="button"
                                         onClick={handleApproveAll}
+                                        disabled={!documentReady}
                                         className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-indigo-700"
                                     >
                                         Duyệt {pendingCount} câu chờ
@@ -613,6 +778,72 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                 </main>
 
                 <aside className="h-fit space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-4">
+                    <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div>
+                            <h2 className="text-sm font-black uppercase tracking-[0.18em] text-slate-400">Tài liệu PDF</h2>
+                            <p className="mt-1 text-xs text-slate-500">Đổi tên tài liệu hoặc thay PDF để AI tạo lại câu hỏi.</p>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-500">Tên tài liệu</label>
+                            <input
+                                value={titleDraft}
+                                onChange={(event) => setTitleDraft(event.target.value)}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                                disabled={savingTitle}
+                            />
+                            <button
+                                type="button"
+                                onClick={handleSaveTitle}
+                                disabled={savingTitle || !titleDraft.trim() || titleDraft.trim() === document.title}
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
+                            >
+                                {savingTitle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                                Lưu tên tài liệu
+                            </button>
+                        </div>
+
+                        <div className="space-y-2 border-t border-slate-200 pt-4">
+                            <label className="text-xs font-bold text-slate-500">Thay file PDF</label>
+                            <label className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-3 py-4 text-center transition ${hasCompletedAssignment ? 'border-slate-200 bg-slate-100 text-slate-400' : 'border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50'}`}>
+                                <FileUp className="mb-2 h-6 w-6" />
+                                <span className="text-xs font-bold">{replaceFile ? replaceFile.name : 'Chọn PDF mới'}</span>
+                                <span className="mt-1 text-[11px] text-slate-500">Tối đa 10MB</span>
+                                <input
+                                    type="file"
+                                    accept="application/pdf"
+                                    onChange={handleReplaceFileChange}
+                                    disabled={hasCompletedAssignment || replacingFile}
+                                    className="hidden"
+                                />
+                            </label>
+
+                            {hasAnyAssignment && !hasCompletedAssignment && (
+                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                                    PDF này đã được giao. Khi thay file, câu hỏi cũ sẽ bị tạo lại và bài đã giao sẽ thay đổi.
+                                </div>
+                            )}
+
+                            {hasCompletedAssignment && (
+                                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                                    Đã có bé hoàn thành bài này, nên không thể thay PDF gốc. Hãy tải lên tài liệu mới để giữ đúng lịch sử học tập.
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={handleReplaceFile}
+                                disabled={replacingFile || !replaceFile || hasCompletedAssignment}
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-55"
+                            >
+                                {replacingFile ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+                                Thay PDF & tạo lại câu hỏi
+                            </button>
+                        </div>
+
+                        {documentError && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs font-medium text-rose-600">{documentError}</p>}
+                    </div>
+
                     <div>
                         <h2 className="text-sm font-black uppercase tracking-[0.18em] text-slate-400">Giao bài cho bé</h2>
                         <p className="mt-1 text-xs text-slate-500">Chọn bé để giao bài AI và theo dõi trạng thái làm bài.</p>
@@ -662,7 +893,7 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                         <button
                             type="button"
                             onClick={handleAssign}
-                            disabled={assigning || children.length === 0 || selectedChildHasAssignment || approvedCount === 0}
+                            disabled={assigning || children.length === 0 || selectedChildHasAssignment || approvedCount === 0 || !documentReady}
                             className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-55"
                         >
                             {assigning ? 'Đang giao...' : selectedChildHasAssignment ? 'Đã giao cho bé này' : 'Giao bài'}
@@ -680,12 +911,13 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
 
                     {assignError && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs font-medium text-rose-600">{assignError}</p>}
                     {approvedCount === 0 && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">Cần duyệt ít nhất một câu hỏi trước khi giao bài.</p>}
+                    {!documentReady && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">Tài liệu cần xử lý xong trước khi giao bài.</p>}
 
                     <div className="space-y-3">
                         <div className="flex items-center justify-between gap-3">
                             <h3 className="text-sm font-black text-slate-900">Bài đã giao</h3>
                             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
-                                {completedAssignments}/{assignments.length || 0} hoàn thành
+                                {completedAssignments}/{activeAssignments.length || 0} hoàn thành
                             </span>
                         </div>
 
@@ -708,6 +940,16 @@ export default function ReviewQuizPage({ params }: { params: Promise<{ id: strin
                                                     {statusMeta.label}
                                                 </span>
                                             </div>
+                                            {assignment.status === 'assigned' && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void handleCancelAssignment(assignment.id)}
+                                                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-600 transition hover:bg-rose-50"
+                                                >
+                                                    <XCircle className="h-4 w-4" />
+                                                    Hủy giao bài
+                                                </button>
+                                            )}
                                         </div>
                                     )
                                 })}

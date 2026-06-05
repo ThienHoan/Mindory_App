@@ -258,7 +258,7 @@ function LessonContent() {
 
     const activeTasks = useMemo(() => tasks.filter((task) => task.status !== 'completed'), [tasks])
     const activeAiAssignments = useMemo(
-        () => aiAssignments.filter((assignment) => assignment.status !== 'completed'),
+        () => aiAssignments.filter((assignment) => assignment.status === 'assigned'),
         [aiAssignments]
     )
 
