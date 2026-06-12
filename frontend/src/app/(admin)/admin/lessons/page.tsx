@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { BACKEND_API_URL } from '@/lib/backend-url'
 import { createClient } from '@/lib/supabase/client'
 import { PlusIcon, PencilIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
-const API = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:4000'
+const API = BACKEND_API_URL
 
 type Subject = { id: string; name: string; grade: number }
 type Lesson = {

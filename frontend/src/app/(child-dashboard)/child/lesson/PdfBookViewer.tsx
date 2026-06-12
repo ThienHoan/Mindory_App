@@ -1,12 +1,38 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Document, Page, pdfjs } from 'react-pdf'
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
+type PdfComponents = {
+    Document: React.ComponentType<PdfDocumentProps>
+    Page: React.ComponentType<PdfPageProps>
+}
+
+type PdfDocumentProps = {
+    file?: string
+    onLoadSuccess?: (data: { numPages: number }) => void
+    loading?: React.ReactNode
+    error?: React.ReactNode
+    children?: React.ReactNode
+}
+
+type PdfPageProps = {
+    pageNumber: number
+    width: number
+    renderAnnotationLayer: boolean
+    renderTextLayer: boolean
+    loading?: React.ReactNode
+}
 
 function clampPage(page: number, min: number, max: number) {
     return Math.min(Math.max(page, min), max)
+}
+
+function PdfLoadingDocument() {
+    return <div className="p-10 text-center text-sm font-bold text-gray-400">Đang tải trình đọc PDF...</div>
+}
+
+function PdfLoadingPage() {
+    return null
 }
 
 function BookPdfViewer({
@@ -28,11 +54,30 @@ function BookPdfViewer({
     const [pageWidth, setPageWidth] = useState(680)
     const [flipStage, setFlipStage] = useState<'idle' | 'out' | 'in'>('idle')
     const [flipDirection, setFlipDirection] = useState<'next' | 'prev'>('next')
+    const [pdfComponents, setPdfComponents] = useState<PdfComponents | null>(null)
 
     const minPage = Math.max(1, startPage)
     const knownLastPage = numPages ?? totalPages ?? endPage ?? minPage
     const maxPage = Math.max(minPage, Math.min(endPage ?? knownLastPage, knownLastPage))
     const pdfFile = useMemo(() => `/api/pdf-proxy?url=${encodeURIComponent(pdfUrl)}`, [pdfUrl])
+    const Document = pdfComponents?.Document ?? PdfLoadingDocument
+    const Page = pdfComponents?.Page ?? PdfLoadingPage
+
+    useEffect(() => {
+        let active = true
+
+        async function loadPdfRenderer() {
+            const mod = await import('react-pdf')
+            mod.pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`
+            if (active) setPdfComponents({ Document: mod.Document, Page: mod.Page })
+        }
+
+        void loadPdfRenderer()
+
+        return () => {
+            active = false
+        }
+    }, [])
 
     useEffect(() => {
         setNumPages(null)

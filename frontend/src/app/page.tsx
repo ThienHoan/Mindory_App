@@ -331,7 +331,7 @@ export default function HomePage() {
             <h1 className="mx-auto mb-8 max-w-5xl text-5xl font-extrabold leading-[1.1] tracking-tight text-slate-900 md:text-7xl lg:text-[5rem]">
               Trò Chơi Giáo Dục <br className="hidden md:block" />
               <span className="bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
-                Tương Tác Cho Bé 3-8 Tuổi
+                Tương Tác Cho Bé 6-12 Tuổi
               </span>
             </h1>
             <p className="mx-auto mb-12 max-w-3xl text-xl leading-relaxed text-slate-600 md:text-2xl">

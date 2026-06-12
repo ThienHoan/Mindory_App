@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { BACKEND_API_URL } from '@/lib/backend-url'
 import { createClient } from '@/lib/supabase/client'
 import {
     UserCircleIcon,
@@ -38,7 +39,7 @@ export default function ParentProfilePage() {
                 const { data: { session } } = await supabase.auth.getSession()
                 if (!session?.access_token) return
 
-                const res = await fetch('http://localhost:4000/auth/me', {
+                const res = await fetch(`${BACKEND_API_URL}/auth/me`, {
                     headers: { Authorization: `Bearer ${session.access_token}` },
                 })
 
@@ -76,7 +77,7 @@ export default function ParentProfilePage() {
                 return
             }
 
-            const res = await fetch('http://localhost:4000/auth/profile', {
+            const res = await fetch(`${BACKEND_API_URL}/auth/profile`, {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',

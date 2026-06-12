@@ -1,6 +1,7 @@
+﻿import { BACKEND_API_URL } from './backend-url'
 import { createClient } from './supabase/client'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
+const API_URL = BACKEND_API_URL
 const inflightRequests = new Map<string, Promise<unknown>>()
 const responseCache = new Map<string, { expiresAt: number; data: unknown }>()
 
@@ -143,12 +144,7 @@ export interface AIAssignment {
         title: string
         file_url?: string
         created_at?: string
-    } | {
-        id: string
-        title: string
-        file_url?: string
-        created_at?: string
-    }[] | null
+    } | null
     profiles?: {
         id: string
         full_name: string | null
@@ -585,9 +581,9 @@ export const api = {
         },
     },
     rewards: {
-        /** Lấy danh sách quà trong kho (reward_items).
-         *  - Nếu truyền childId → lấy quà của parent_id tương ứng bé đó.
-         *  - Nếu truyền parentId → lấy tất cả quà của parent này (trang quản lý).
+        /** Láº¥y danh sÃ¡ch quÃ  trong kho (reward_items).
+         *  - Náº¿u truyá»n childId â†’ láº¥y quÃ  cá»§a parent_id tÆ°Æ¡ng á»©ng bÃ© Ä‘Ã³.
+         *  - Náº¿u truyá»n parentId â†’ láº¥y táº¥t cáº£ quÃ  cá»§a parent nÃ y (trang quáº£n lÃ½).
          */
         listStore: async (params: { childId?: string; parentId?: string }): Promise<RewardItem[]> => {
             const qs = new URLSearchParams()
@@ -601,9 +597,9 @@ export const api = {
             return []
         },
 
-        /** Lấy danh sách yêu cầu đổi quà (reward_redemptions).
-         *  - childId → lấy lịch sử đổi quà của bé.
-         *  - parentId → lấy tất cả yêu cầu đổi quà con của parent.
+        /** Láº¥y danh sÃ¡ch yÃªu cáº§u Ä‘á»•i quÃ  (reward_redemptions).
+         *  - childId â†’ láº¥y lá»‹ch sá»­ Ä‘á»•i quÃ  cá»§a bÃ©.
+         *  - parentId â†’ láº¥y táº¥t cáº£ yÃªu cáº§u Ä‘á»•i quÃ  con cá»§a parent.
          */
         listRedemptions: async (params: { childId?: string; parentId?: string }): Promise<RewardRedemption[]> => {
             const qs = new URLSearchParams()
@@ -617,7 +613,7 @@ export const api = {
             return []
         },
 
-        /** Bé đổi quà: trừ XP và tạo redemption mới với status='requested'. */
+        /** BÃ© Ä‘á»•i quÃ : trá»« XP vÃ  táº¡o redemption má»›i vá»›i status='requested'. */
         redeem: async (itemId: string, childId: string): Promise<{ xp: number; redemptionId?: string }> => {
             const raw = await requestJson<unknown>(`/reward-store/${encodeURIComponent(itemId)}/redeem`, {
                 method: 'POST',
@@ -627,7 +623,7 @@ export const api = {
             return normalizeObjectResponse<{ xp: number; redemptionId?: string }>(raw)
         },
 
-        /** Ba/mẹ tạo quà mới trong kho. */
+        /** Ba/máº¹ táº¡o quÃ  má»›i trong kho. */
         createStoreItem: async (data: {
             parentId: string
             title: string
@@ -642,7 +638,7 @@ export const api = {
             return normalizeObjectResponse<RewardItem>(raw)
         },
 
-        /** Ba/mẹ cập nhật quà (ẩn/hiện). */
+        /** Ba/máº¹ cáº­p nháº­t quÃ  (áº©n/hiá»‡n). */
         updateStoreItem: async (itemId: string, data: { parentId: string; isActive: boolean }): Promise<RewardItem> => {
             const raw = await requestJson<unknown>(`/reward-store/${encodeURIComponent(itemId)}`, {
                 method: 'PATCH',
@@ -652,7 +648,7 @@ export const api = {
             return normalizeObjectResponse<RewardItem>(raw)
         },
 
-        /** Ba/mẹ xóa quà khỏi kho. */
+        /** Ba/máº¹ xÃ³a quÃ  khá»i kho. */
         deleteStoreItem: async (itemId: string, parentId: string): Promise<void> => {
             await requestJson<unknown>(`/reward-store/${encodeURIComponent(itemId)}`, {
                 method: 'DELETE',
@@ -661,7 +657,7 @@ export const api = {
             })
         },
 
-        /** Ba/mẹ duyệt / từ chối yêu cầu đổi quà. */
+        /** Ba/máº¹ duyá»‡t / tá»« chá»‘i yÃªu cáº§u Ä‘á»•i quÃ . */
         updateRedemptionStatus: async (
             redemptionId: string,
             parentId: string,
@@ -676,3 +672,4 @@ export const api = {
         },
     },
 }
+

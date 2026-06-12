@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -24,7 +24,7 @@ export default function CreateChildPage() {
         const { data: { user: parentUser } } = await supabase.auth.getUser()
 
         if (!parentUser) {
-            setError('Bạn cần đăng nhập để thực hiện chức năng này.')
+            setError('Báº¡n cáº§n Ä‘Äƒng nháº­p Ä‘á»ƒ thá»±c hiá»‡n chá»©c nÄƒng nÃ y.')
             setLoading(false)
             return
         }
@@ -36,7 +36,7 @@ export default function CreateChildPage() {
 
         // Attempting via API route (Backend Express Server)
         try {
-            const res = await fetch('http://localhost:4000/children', {
+            const res = await fetch('/api/children', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -67,10 +67,10 @@ export default function CreateChildPage() {
         <div className="max-w-2xl mx-auto space-y-8">
             <div>
                 <h2 className="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
-                    Tạo Hồ Sơ Trẻ Mới
+                    Táº¡o Há»“ SÆ¡ Tráº» Má»›i
                 </h2>
                 <p className="mt-2 text-sm text-gray-600">
-                    Tạo tài khoản để bé có thể đăng nhập và học tập.
+                    Táº¡o tÃ i khoáº£n Ä‘á»ƒ bÃ© cÃ³ thá»ƒ Ä‘Äƒng nháº­p vÃ  há»c táº­p.
                 </p>
             </div>
 
@@ -78,7 +78,7 @@ export default function CreateChildPage() {
                 <div className="grid grid-cols-1 gap-x-6 gap-y-8 sm:grid-cols-6">
                     <div className="sm:col-span-4">
                         <label htmlFor="full-name" className="block text-sm font-medium leading-6 text-gray-900">
-                            Họ và Tên bé
+                            Há» vÃ  TÃªn bÃ©
                         </label>
                         <div className="mt-2">
                             <input
@@ -95,7 +95,7 @@ export default function CreateChildPage() {
 
                     <div className="sm:col-span-4">
                         <label htmlFor="email" className="block text-sm font-medium leading-6 text-gray-900">
-                            Email đăng nhập (cho bé)
+                            Email Ä‘Äƒng nháº­p (cho bÃ©)
                         </label>
                         <div className="mt-2">
                             <input
@@ -113,7 +113,7 @@ export default function CreateChildPage() {
 
                     <div className="sm:col-span-4">
                         <label htmlFor="password" className="block text-sm font-medium leading-6 text-gray-900">
-                            Mật khẩu
+                            Máº­t kháº©u
                         </label>
                         <div className="mt-2">
                             <input
@@ -130,7 +130,7 @@ export default function CreateChildPage() {
 
                     <div className="sm:col-span-2">
                         <label htmlFor="grade" className="block text-sm font-medium leading-6 text-gray-900">
-                            Lớp
+                            Lá»›p
                         </label>
                         <div className="mt-2">
                             <select
@@ -141,7 +141,7 @@ export default function CreateChildPage() {
                                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-inset ring-indigo-600 sm:text-sm sm:leading-6 px-3"
                             >
                                 {[1, 2, 3, 4, 5].map((value) => (
-                                    <option key={value} value={value}>Lớp {value}</option>
+                                    <option key={value} value={value}>Lá»›p {value}</option>
                                 ))}
                             </select>
                         </div>
@@ -161,17 +161,18 @@ export default function CreateChildPage() {
                         onClick={() => router.back()}
                         className="text-sm font-semibold leading-6 text-gray-900"
                     >
-                        Hủy
+                        Há»§y
                     </button>
                     <button
                         type="submit"
                         disabled={loading}
                         className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50"
                     >
-                        {loading ? 'Đang tạo...' : 'Tạo Hồ Sơ'}
+                        {loading ? 'Äang táº¡o...' : 'Táº¡o Há»“ SÆ¡'}
                     </button>
                 </div>
             </form>
         </div>
     )
 }
+

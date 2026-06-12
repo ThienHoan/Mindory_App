@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { BACKEND_API_URL } from '@/lib/backend-url'
 import { AcademicCapIcon, BookOpenIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline'
 
-const API = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:4000'
+const API = BACKEND_API_URL
 
 async function fetchWithAuth(path: string, token: string) {
     const res = await fetch(`${API}${path}`, {

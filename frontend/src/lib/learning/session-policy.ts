@@ -1,9 +1,9 @@
-export const DEFAULT_FREE_QUIZ_SECONDS = 1 * 60  //10
+export const DEFAULT_FREE_QUIZ_SECONDS = 10 * 60  //10
 export const DEFAULT_FOCUS_INTERVAL_SECONDS = 1 * 60
 export const DEFAULT_BREAK_SECONDS = 30
 export const DEFAULT_GAME_BREAK_SECONDS = 60
 export const DEFAULT_ASSIGNED_QUIZ_GAME_BREAK_SECONDS = 45
-export const DEFAULT_MIN_ACTIVE_BEFORE_QUIZ_SECONDS = 1 * 60  //5
+export const DEFAULT_MIN_ACTIVE_BEFORE_QUIZ_SECONDS = 5 * 60  //5
 
 export type SessionMode = 'study' | 'free-quiz' | 'assigned-quiz'
 
