@@ -20,6 +20,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// App Platform sits behind a reverse proxy, so trust the forwarded client IP.
+app.set('trust proxy', 1);
+
 // ---- Security Middleware ----
 app.use(helmet()); // Set secure HTTP headers
 app.use(cors({
