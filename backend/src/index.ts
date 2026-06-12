@@ -24,11 +24,20 @@ const PORT = process.env.PORT || 4000;
 app.set('trust proxy', 1);
 
 // ---- Security Middleware ----
+const allowedOrigins = process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map((origin) => origin.trim()).filter(Boolean)
+    : ['http://localhost:3000', 'http://localhost:3001']
+
 app.use(helmet()); // Set secure HTTP headers
 app.use(cors({
-    origin: process.env.FRONTEND_URL
-        ? process.env.FRONTEND_URL.split(',')
-        : ['http://localhost:3000', 'http://localhost:3001'],
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true)
+            return
+        }
+
+        callback(new Error('Not allowed by CORS'))
+    },
     credentials: true,
 }));
 
