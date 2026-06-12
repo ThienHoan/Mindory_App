@@ -34,7 +34,7 @@ export default function ChildSettingsPage() {
                     setGrade(data.grade ?? 1)
                 }
             } catch (err: any) {
-                setError(err.message || 'KhÃ´ng thá»ƒ táº£i há»“ sÆ¡ tráº»')
+                setError(err.message || 'Không thể tải hồ sơ trẻ')
             } finally {
                 setLoading(false)
             }
@@ -51,7 +51,7 @@ export default function ChildSettingsPage() {
 
         const { data: { user: parentUser } } = await supabase.auth.getUser()
         if (!parentUser) {
-            setError('Báº¡n cáº§n Ä‘Äƒng nháº­p Ä‘á»ƒ cáº­p nháº­t há»“ sÆ¡ tráº».')
+            setError('Bạn cần đăng nhập để cập nhật hồ sơ trẻ.')
             setSaving(false)
             return
         }
@@ -68,10 +68,10 @@ export default function ChildSettingsPage() {
 
             const data = await res.json()
             if (!res.ok) {
-                throw new Error(data.error || 'KhÃ´ng thá»ƒ cáº­p nháº­t há»“ sÆ¡ tráº»')
+                throw new Error(data.error || 'Không thể cập nhật hồ sơ trẻ')
             }
 
-            setSuccess('Cáº­p nháº­t lá»›p thÃ nh cÃ´ng!')
+            setSuccess('Cập nhật lớp thành công!')
         } catch (err: any) {
             setError(err.message)
         } finally {
@@ -87,10 +87,10 @@ export default function ChildSettingsPage() {
                     className="inline-flex items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50"
                 >
                     <ArrowLeftIcon className="h-4 w-4" />
-                    Quay láº¡i
+                    Quay lại
                 </button>
                 <h2 className="text-3xl font-black tracking-tight text-slate-900">
-                    CÃ i Äáº·t Há»“ SÆ¡
+                    Cài Đặt Hồ Sơ
                 </h2>
             </div>
 
@@ -99,19 +99,19 @@ export default function ChildSettingsPage() {
                     <div className="flex items-center justify-center py-12">
                         <div className="text-center">
                             <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-                            <p className="mt-3 text-sm font-medium text-slate-600">Äang táº£i há»“ sÆ¡...</p>
+                            <p className="mt-3 text-sm font-medium text-slate-600">Đang tải hồ sơ...</p>
                         </div>
                     </div>
                 ) : (
                     <form onSubmit={handleSave} className="space-y-6">
                         <div>
-                            <h3 className="text-xl font-bold text-slate-900">ThÃ´ng tin lá»›p</h3>
-                            <p className="text-sm text-slate-500">BÃ© sáº½ há»c Ä‘Ãºng lá»›p Ä‘Ã£ gÃ¡n á»Ÿ Ä‘Ã¢y.</p>
+                            <h3 className="text-xl font-bold text-slate-900">Thông tin lớp</h3>
+                            <p className="text-sm text-slate-500">Bé sẽ học đúng lớp đã gán ở đây.</p>
                         </div>
 
                         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                             <div>
-                                <label className="block text-sm font-medium text-slate-700">TÃªn bÃ©</label>
+                                <label className="block text-sm font-medium text-slate-700">Tên bé</label>
                                 <input
                                     type="text"
                                     value={fullName}
@@ -120,14 +120,14 @@ export default function ChildSettingsPage() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700">Lá»›p</label>
+                                <label className="block text-sm font-medium text-slate-700">Lớp</label>
                                 <select
                                     value={grade}
                                     onChange={(e) => setGrade(Number(e.target.value))}
                                     className="mt-2 w-full rounded-md border-0 py-2 px-3 text-sm text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-300"
                                 >
                                     {[1, 2, 3, 4, 5].map((value) => (
-                                        <option key={value} value={value}>Lá»›p {value}</option>
+                                        <option key={value} value={value}>Lớp {value}</option>
                                     ))}
                                 </select>
                             </div>
@@ -146,14 +146,14 @@ export default function ChildSettingsPage() {
                                 onClick={() => router.back()}
                                 className="rounded-lg border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50"
                             >
-                                Há»§y
+                                Hủy
                             </button>
                             <button
                                 type="submit"
                                 disabled={saving}
                                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 disabled:opacity-60"
                             >
-                                {saving ? 'Äang lÆ°u...' : 'LÆ°u thay Ä‘á»•i'}
+                                {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
                             </button>
                         </div>
                     </form>
@@ -162,4 +162,3 @@ export default function ChildSettingsPage() {
         </div>
     )
 }
-

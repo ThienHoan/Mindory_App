@@ -96,10 +96,10 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
         return (
             <div className="min-h-screen bg-sky-50 flex flex-col items-center justify-center p-4">
                 <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-md w-full">
-                    <h2 className="text-2xl font-bold text-slate-800 mb-4">á»i! ChÆ°a cÃ³ cÃ¢u há»i nÃ o</h2>
-                    <p className="text-slate-600 mb-8">Bá»‘ máº¹ chÆ°a duyá»‡t xong cÃ¢u há»i cho bÃ i nÃ y. BÃ© quay láº¡i sau nhÃ©!</p>
+                    <h2 className="text-2xl font-bold text-slate-800 mb-4">Ối! Chưa có câu hỏi nào</h2>
+                    <p className="text-slate-600 mb-8">Bố mẹ chưa duyệt xong câu hỏi cho bài này. Bé quay lại sau nhé!</p>
                     <Link href="/child" className="bg-sky-500 text-white px-6 py-3 rounded-xl font-bold hover:bg-sky-600 inline-block">
-                        Vá» Trang Chá»§
+                        Về Trang Chủ
                     </Link>
                 </div>
             </div>
@@ -108,10 +108,10 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
 
     if (isFinished) {
         const percentage = (score / questions.length) * 100
-        let message = 'Cá»‘ gáº¯ng lÃªn nhÃ©!'
-        if (percentage === 100) message = 'Tuyá»‡t vá»i quÃ¡!'
-        else if (percentage >= 80) message = 'Ráº¥t giá»i!'
-        else if (percentage >= 50) message = 'KhÃ¡ láº¯m!'
+        let message = 'Cố gắng lên nhé!'
+        if (percentage === 100) message = 'Tuyệt vời quá!'
+        else if (percentage >= 80) message = 'Rất giỏi!'
+        else if (percentage >= 50) message = 'Khá lắm!'
 
         return (
             <div className="min-h-screen bg-gradient-to-b from-sky-100 to-indigo-100 flex items-center justify-center p-4">
@@ -122,12 +122,12 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
                             <Trophy className="w-12 h-12 text-yellow-500" />
                         </div>
                         <h2 className="text-3xl font-black text-slate-800 mb-2">{message}</h2>
-                        <p className="text-slate-600 font-medium mb-8">BÃ© Ä‘Ã£ hoÃ n thÃ nh bÃ i: {document.title}</p>
+                        <p className="text-slate-600 font-medium mb-8">Bé đã hoàn thành bài: {document.title}</p>
                         
                         <div className="text-6xl font-black text-indigo-600 mb-2">
                             {score}<span className="text-3xl text-slate-400">/{questions.length}</span>
                         </div>
-                        <p className="text-slate-500 font-medium mb-8">CÃ¢u tráº£ lá»i Ä‘Ãºng</p>
+                        <p className="text-slate-500 font-medium mb-8">Câu trả lời đúng</p>
 
                         {xpAwarded > 0 && (
                             <div className="mb-6 w-full rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4">
@@ -138,7 +138,7 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
 
                         <div className="flex gap-4 w-full">
                             <button onClick={handleRestart} className="flex-1 bg-amber-100 text-amber-700 py-4 rounded-2xl font-bold text-lg hover:bg-amber-200 transition-colors flex items-center justify-center gap-2">
-                                <RefreshCcw className="w-5 h-5" /> ChÆ¡i Láº¡i
+                                <RefreshCcw className="w-5 h-5" /> Chơi Lại
                             </button>
                             <Link href="/child" className="flex-1 bg-indigo-500 text-white py-4 rounded-2xl font-bold text-lg hover:bg-indigo-600 transition-colors flex items-center justify-center gap-2">
                                 <Home className="w-5 h-5" /> Xong
@@ -162,14 +162,14 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
                     </Link>
                     <div className="flex items-center gap-2">
                         <Star className="w-6 h-6 text-yellow-400 fill-yellow-400" />
-                        <span className="font-bold text-slate-700 text-lg">Äiá»ƒm: {score}</span>
+                        <span className="font-bold text-slate-700 text-lg">Điểm: {score}</span>
                     </div>
                 </div>
 
                 {/* Progress */}
                 <div className="mb-6">
                     <div className="flex justify-between text-sm font-bold text-slate-500 mb-2 px-2">
-                        <span>CÃ¢u {currentIndex + 1} / {questions.length}</span>
+                        <span>Câu {currentIndex + 1} / {questions.length}</span>
                         <span>{( (currentIndex / questions.length) * 100 ).toFixed(0)}%</span>
                     </div>
                     <div className="w-full bg-white rounded-full h-4 overflow-hidden border-2 border-white shadow-inner">
@@ -230,7 +230,7 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
                             onClick={handleCheckAnswer}
                             className="bg-amber-400 hover:bg-amber-500 text-amber-900 px-8 py-4 rounded-2xl font-black text-xl shadow-[0_4px_0_#d97706] active:shadow-[0_0px_0_#d97706] active:translate-y-1 transition-all"
                         >
-                            Kiá»ƒm tra
+                            Kiểm tra
                         </button>
                     )}
                     
@@ -239,7 +239,7 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
                             onClick={handleNext}
                             className="bg-sky-500 hover:bg-sky-600 text-white px-8 py-4 rounded-2xl font-black text-xl shadow-[0_4px_0_#0284c7] active:shadow-[0_0px_0_#0284c7] active:translate-y-1 transition-all flex items-center gap-2"
                         >
-                            {currentIndex < questions.length - 1 ? 'CÃ¢u tiáº¿p theo' : 'HoÃ n thÃ nh'}
+                            {currentIndex < questions.length - 1 ? 'Câu tiếp theo' : 'Hoàn thành'}
                             <ArrowRight className="w-6 h-6" />
                         </button>
                     )}
@@ -248,5 +248,4 @@ export default function ChildPDFQuizPage({ params }: { params: Promise<{ id: str
         </div>
     )
 }
-
 
